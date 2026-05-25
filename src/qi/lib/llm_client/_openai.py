@@ -5,6 +5,13 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+
+def _truncate(obj: object, max_len: int = 500) -> str:
+    s = str(obj)
+    if len(s) > max_len:
+        s = s[:max_len] + f"... (truncated, {len(s)} total chars)"
+    return s
+
 DEFAULT_MODEL = "gpt-4o"
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
@@ -31,7 +38,7 @@ class OpenAILLMClient:
         )
         resp.raise_for_status()
         data: Any = resp.json()
-        logger.info(f"<<< Response:\n{data}")
+        logger.info("<<< Response:\n%s", _truncate(data))
         content = data["choices"][0]["message"]["content"]
         assert isinstance(content, str)
         return content

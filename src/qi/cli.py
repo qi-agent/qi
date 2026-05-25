@@ -1,11 +1,11 @@
 """CLI entry point for Qi."""
 
-
 import importlib
 import logging
 import sys
 
 from qi import __version__
+from qi.lib.logging import QiLogHandler
 
 SUBCOMMANDS: dict[str, str] = {
     "run": "qi.commands.run",
@@ -42,8 +42,9 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(module)s.%(funcName)s:%(lineno)d %(message)s",
-        datefmt="%H:%M:%S",
+        format="%(asctime)s %(levelname)s %(name)s.%(funcName)s.:%(lineno)s %(message)s",
+        datefmt="[%Y-%m-%d %H:%M:%S]",
+        handlers=[QiLogHandler()],
     )
 
     if args[0] in SUBCOMMANDS:

@@ -5,9 +5,20 @@ import logging
 import re
 from typing import Any
 
+from rich.console import Console
+from rich.markdown import Markdown
+
 logger = logging.getLogger(__name__)
+console = Console()
 
 ToolMap = dict[str, Any]
+
+
+def _truncate(obj: object, max_len: int = 500) -> str:
+    s = str(obj)
+    if len(s) > max_len:
+        s = s[:max_len] + f"... (truncated, {len(s)} total chars)"
+    return s
 
 
 def _read_file(path: str, start: int = 0, end: int | None = None) -> str:
@@ -65,28 +76,33 @@ def handle_response(
             match item.get("type"):
 
                 case "thought":
-                    logger.info("Thought: %s", item.get("content", ""))
+                    content = item.get("content", "")
+                    logger.debug("Thought: %s", content)
+                    console.print(content, style="dim", soft_wrap=True)
 
                 case "reply":
-                    print(item["content"])
+                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True)
 
                 case "ask":
-                    answer = input("> ")
+                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True)
+                    answer = console.input("[bold cyan]> [/bold cyan]")
                     reply_messages.append({"role": "user", "content": answer})
 
                 case "conclusion":
+                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True)
                     done = True
 
                 case "call":
                     tool_name = item.get("tool", "")
                     args = _normalize_args(tool_name, item.get("args", {}))
+                    console.print(f"[blue]{tool_name}[/blue] [dim]{json.dumps(args)}[/dim]", soft_wrap=True)
                     tool_fn = tool_map.get(tool_name)
                     if tool_fn is None:
                         logger.error(f"Unknown tool: {tool_name}")
                         done = True
                     else:
                         result = tool_fn(**args)
-                        logger.info(f"Result of tool call:\n{result[:300]}\n=============")
+                        logger.info("Tool result:\n%s\n=============", _truncate(result))
                         reply_messages.append({"role": "tool", "content": result})
 
                 case _:

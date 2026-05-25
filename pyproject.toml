@@ -6,7 +6,10 @@ authors = [
     { name = "Wil Tan", email = "wil@dready.org" }
 ]
 requires-python = ">=3.12"
-dependencies = ["requests>=2.32.0"]
+dependencies = [
+    "requests>=2.32.0",
+    "rich>=14.0.0",
+]
 
 [project.scripts]
 qi = "qi.cli:main"

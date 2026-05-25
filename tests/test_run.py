@@ -1,11 +1,16 @@
 """Tests for the run command."""
 
+import re
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
 
 from qi.commands.run import run
 from qi.lib.config import Settings
+
+
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", text)
 
 
 def test_files_sent_as_user_messages() -> None:
@@ -65,7 +70,7 @@ def test_files_sent_as_user_messages_capsys(capsys: pytest.CaptureFixture[str]) 
 
     assert rc == 0
     out, _ = capsys.readouterr()
-    assert out == "analysis complete\n"
+    assert _strip_ansi(out).strip() == "analysis complete"
 
 
 def test_prompt_adds_instruction_message() -> None:

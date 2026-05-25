@@ -8,6 +8,13 @@ from qi.lib.schema import RESPONSE_SCHEMA
 logger = logging.getLogger(__name__)
 
 
+def _truncate(obj: object, max_len: int = 500) -> str:
+    s = str(obj)
+    if len(s) > max_len:
+        s = s[:max_len] + f"... (truncated, {len(s)} total chars)"
+    return s
+
+
 DEFAULT_MODEL = "gemini-flash-latest"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 
@@ -52,14 +59,14 @@ class GoogleLLMClient:
         body["generationConfig"] = generation_config
 
         url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
-        logger.info(f">>>>>>>>>>>> Request: POST {url}\n{body}")
+        logger.info(">>>>>>>>>>>> Request: POST %s\n%s", url, _truncate(body))
 
         resp = requests.post(url, headers=headers, json=body)
         if not resp.ok:
-            logger.error(f"<<<<<<<<<<<< Response: {resp.status_code} {resp.reason}\n{resp.text}")
+            logger.error("<<<<<<<<<<<< Response: %s %s\n%s", resp.status_code, resp.reason, _truncate(resp.text))
             resp.raise_for_status()
         data: Any = resp.json()
-        logger.info(f"<<<<<<<<<<<< Response:\n{data}")
+        logger.info("<<<<<<<<<<<< Response:\n%s", _truncate(data))
         content = data["candidates"][0]["content"]["parts"][0]["text"]
         assert isinstance(content, str)
         return content
