@@ -3,12 +3,13 @@ from typing import Any
 
 import requests
 
+from qi.lib.llm_client._types import LLMResponse, ToolCall
 from qi.lib.schema import RESPONSE_SCHEMA
 
 logger = logging.getLogger(__name__)
 
 
-def _truncate(obj: object, max_len: int = 500) -> str:
+def _truncate(obj: object, max_len: int = 10000) -> str:
     s = str(obj)
     if len(s) > max_len:
         s = s[:max_len] + f"... (truncated, {len(s)} total chars)"
@@ -27,7 +28,14 @@ class GoogleLLMClient:
         self.model = model
         self.api_key = api_key
 
-    def chat(self, messages: list[dict[str, str]], **kwargs: object) -> str:
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, object]] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 0,
+        **kwargs: object,
+    ) -> LLMResponse:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
             headers["X-goog-api-key"] = self.api_key
@@ -39,6 +47,19 @@ class GoogleLLMClient:
             role = msg["role"]
             if role == "system":
                 system_instruction = {"parts": [{"text": msg["content"]}]}
+            elif role == "tool":
+                tool_response = {
+                    "role": "function",
+                    "parts": [
+                        {
+                            "functionResponse": {
+                                "name": msg.get("name", ""),
+                                "response": {"result": msg["content"]},
+                            }
+                        }
+                    ],
+                }
+                contents.append(tool_response)
             else:
                 contents.append({
                     "role": "model" if role == "assistant" else "user",
@@ -49,24 +70,46 @@ class GoogleLLMClient:
         if system_instruction is not None:
             body["system_instruction"] = system_instruction
 
-        generation_config: dict[str, Any] = {}
-        if "temperature" in kwargs:
-            generation_config["temperature"] = kwargs["temperature"]
-        if "max_tokens" in kwargs:
-            generation_config["maxOutputTokens"] = kwargs["max_tokens"]
-        generation_config["responseMimeType"] = "application/json"
-        generation_config["responseSchema"] = RESPONSE_SCHEMA
+        generation_config: dict[str, Any] = {
+            "temperature": temperature,
+            "responseMimeType": "application/json",
+            "responseSchema": RESPONSE_SCHEMA,
+        }
+        if max_tokens:
+            generation_config["maxOutputTokens"] = max_tokens
         body["generationConfig"] = generation_config
+
+        if tools is not None:
+            body["tools"] = tools
 
         url = f"{self.base_url}/v1beta/models/{self.model}:generateContent"
         logger.info(">>>>>>>>>>>> Request: POST %s\n%s", url, _truncate(body))
 
-        resp = requests.post(url, headers=headers, json=body)
+        resp = requests.post(url, headers=headers, json=body, timeout=300)
         if not resp.ok:
             logger.error("<<<<<<<<<<<< Response: %s %s\n%s", resp.status_code, resp.reason, _truncate(resp.text))
             resp.raise_for_status()
         data: Any = resp.json()
         logger.info("<<<<<<<<<<<< Response:\n%s", _truncate(data))
-        content = data["candidates"][0]["content"]["parts"][0]["text"]
-        assert isinstance(content, str)
-        return content
+
+        candidate = data["candidates"][0]
+        parts: list[Any] = candidate["content"]["parts"]
+
+        content: str | None = None
+        tool_calls: list[ToolCall] = []
+        for part in parts:
+            if "text" in part:
+                content = part["text"]
+            elif "functionCall" in part:
+                fc = part["functionCall"]
+                tool_calls.append(
+                    ToolCall(
+                        style="google",
+                        index=0,
+                        id=fc.get("name", ""),
+                        name=fc["name"],
+                        args=dict(fc.get("args", {})),
+                    )
+                )
+
+        return LLMResponse(content=content or "", tool_calls=tool_calls)

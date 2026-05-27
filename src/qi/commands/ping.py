@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import logging
 
+from rich.text import Text
+
 from qi.lib.config import load
 from qi.lib.llm_client import LLMClient
 from qi.lib.logging import output
@@ -27,7 +29,7 @@ def run(argv: list[str]) -> int:
         api_key=settings.api_key,
     )
 
-    logger.info("Sending ping to %s with model %s", settings.base_url, settings.model)
+    logger.debug("Sending ping to %s with model %s", settings.base_url, settings.model)
 
     try:
         response = client.chat(
@@ -39,5 +41,5 @@ def run(argv: list[str]) -> int:
         logger.exception("Ping failed")
         return 1
 
-    output(response)
+    output(Text.styled(response.content or "", "bold"))
     return 0

@@ -1,3 +1,5 @@
+"""Tests for LLM client implementations."""
+
 from unittest.mock import Mock, patch
 
 import requests
@@ -7,11 +9,11 @@ from qi.lib.llm_client._google import GoogleLLMClient
 from qi.lib.llm_client._openai import OpenAILLMClient
 
 
-def test_chat_returns_content() -> None:
+def test_openai_chat_returns_content() -> None:
     mock_resp = Mock(spec=requests.Response)
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
-        "choices": [{"message": {"content": "Hello!"}}]
+        "choices": [{"message": {"content": "Hello!", "tool_calls": None}}]
     }
 
     with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp):
@@ -21,14 +23,15 @@ def test_chat_returns_content() -> None:
         )
         result = client.chat([{"role": "user", "content": "Hi"}])
 
-    assert result == "Hello!"
+    assert result.content == "Hello!"
+    assert result.tool_calls == []
 
 
-def test_chat_passes_temperature_and_max_tokens() -> None:
+def test_openai_chat_passes_temperature_and_max_tokens() -> None:
     mock_resp = Mock(spec=requests.Response)
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
-        "choices": [{"message": {"content": "Hello!"}}]
+        "choices": [{"message": {"content": "Hello!", "tool_calls": None}}]
     }
 
     with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp) as mock_post:
@@ -48,6 +51,118 @@ def test_chat_passes_temperature_and_max_tokens() -> None:
     assert call_kwargs["json"]["max_tokens"] == 100
 
 
+def test_openai_chat_passes_tools() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": None, "tool_calls": None}}]
+    }
+
+    tools = [{"type": "function", "function": {"name": "ReadFile", "parameters": {"type": "object", "properties": {}}}}]
+
+    with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp) as mock_post:
+        client = LLMClient.create(
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o",
+            api_key="sk-test",
+        )
+        client.chat(
+            [{"role": "user", "content": "Hi"}],
+            tools=tools,
+        )
+
+    call_kwargs = mock_post.call_args.kwargs
+    assert call_kwargs["json"]["tools"] == tools
+
+
+def test_openai_chat_passes_response_format() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": "{}", "tool_calls": None}}]
+    }
+
+    response_format = {"type": "json_schema", "json_schema": {"name": "test", "schema": {"type": "object"}}}
+
+    with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp) as mock_post:
+        client = LLMClient.create(
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o",
+        )
+        client.chat(
+            [{"role": "user", "content": "Hi"}],
+            response_format=response_format,
+        )
+
+    call_kwargs = mock_post.call_args.kwargs
+    assert call_kwargs["json"]["response_format"] == response_format
+
+
+def test_openai_parses_tool_calls() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_abc",
+                        "function": {
+                            "name": "ReadFile",
+                            "arguments": '{"path": "test.py", "start": 0}',
+                        },
+                    }
+                ],
+            }
+        }]
+    }
+
+    with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o",
+        )
+        result = client.chat([{"role": "user", "content": "Read test.py"}])
+
+    assert result.content is None
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].id == "call_abc"
+    assert result.tool_calls[0].name == "ReadFile"
+    assert result.tool_calls[0].args == {"path": "test.py", "start": 0}
+
+
+def test_openai_parses_both_content_and_tool_calls() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": '{"messages": [{"type": "thought", "content": "Let me read"}]}',
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "function": {
+                            "name": "ReadFile",
+                            "arguments": '{"path": "test.py"}',
+                        },
+                    }
+                ],
+            }
+        }]
+    }
+
+    with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o",
+        )
+        result = client.chat([{"role": "user", "content": "Read test.py"}])
+
+    assert result.content is not None
+    assert len(result.tool_calls) == 1
+
+
 def test_google_chat_returns_content() -> None:
     mock_resp = Mock(spec=requests.Response)
     mock_resp.status_code = 200
@@ -63,7 +178,8 @@ def test_google_chat_returns_content() -> None:
         )
         result = client.chat([{"role": "user", "content": "Explain AI"}])
 
-    assert result == "AI learns patterns"
+    assert result.content == "AI learns patterns"
+    assert result.tool_calls == []
     call_kwargs = mock_post.call_args.kwargs
     assert call_kwargs["headers"]["X-goog-api-key"] == "goog-key"
     assert call_kwargs["json"]["contents"] == [
@@ -121,6 +237,86 @@ def test_google_chat_maps_generation_config() -> None:
     assert gc["maxOutputTokens"] == 200
     assert gc["responseMimeType"] == "application/json"
     assert "responseSchema" in gc
+
+
+def test_google_chat_tools_in_body() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "OK"}]}}],
+    }
+
+    tools = [{"functionDeclarations": [{"name": "ReadFile", "parameters": {"type": "object"}}]}]
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp) as mock_post:
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        client.chat(
+            [{"role": "user", "content": "Hi"}],
+            tools=tools,
+        )
+
+    body = mock_post.call_args.kwargs["json"]
+    assert body["tools"] == tools
+
+
+def test_google_parses_function_call() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{
+            "content": {
+                "parts": [
+                    {"text": "Reading file..."},
+                    {"functionCall": {"name": "ReadFile", "args": {"path": "test.py"}}},
+                ]
+            }
+        }],
+    }
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        result = client.chat([{"role": "user", "content": "Read test.py"}])
+
+    assert result.content == "Reading file..."
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "ReadFile"
+    assert result.tool_calls[0].args == {"path": "test.py"}
+
+
+def test_google_chat_tool_result_message() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "Result: hello"}]}}],
+    }
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp) as mock_post:
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        client.chat([
+            {"role": "user", "content": "Read file"},
+            {"role": "assistant", "content": ""},
+            {"role": "tool", "name": "ReadFile", "content": "file content"},
+        ])
+
+    contents = mock_post.call_args.kwargs["json"]["contents"]
+    assert contents[-1] == {
+        "role": "function",
+        "parts": [
+            {"functionResponse": {"name": "ReadFile", "response": {"result": "file content"}}}
+        ],
+    }
 
 
 def test_factory_returns_openai_client() -> None:

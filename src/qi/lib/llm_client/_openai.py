@@ -1,19 +1,24 @@
+import json
 import logging
 from typing import Any
 
 import requests
 
+from qi.lib.llm_client._types import LLMResponse, ToolCall
+
 logger = logging.getLogger(__name__)
 
 
-def _truncate(obj: object, max_len: int = 500) -> str:
+def _truncate(obj: object, max_len: int = 5000) -> str:
     s = str(obj)
     if len(s) > max_len:
         s = s[:max_len] + f"... (truncated, {len(s)} total chars)"
     return s
 
+
 DEFAULT_MODEL = "gpt-4o"
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
 
 class OpenAILLMClient:
     def __init__(
@@ -23,22 +28,116 @@ class OpenAILLMClient:
         self.model = model
         self.api_key = api_key
 
-    def chat(self, messages: list[dict[str, str]], **kwargs: object) -> str:
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, object]] | None = None,
+        response_format: dict[str, object] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 0,
+        **kwargs: object,
+    ) -> LLMResponse:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        body: dict[str, Any] = {"model": self.model, "messages": messages}
-        body.update(kwargs)
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if max_tokens:
+            body["max_tokens"] = max_tokens
+        if tools is not None:
+            body["tools"] = tools
+        if response_format is not None:
+            body["response_format"] = response_format
+
+        url = f"{self.base_url}/chat/completions"
+
+        logger.info(">>>>>>>>>>>> Request: POST %s\n%s", url, _truncate(body))
+
+        resp = requests.post(url, headers=headers, json=body)
+        resp.raise_for_status()
+        data: Any = resp.json()
+        logger.info("<<< Response:\n%s", _truncate(data))
+
+        choice = data["choices"][0]["message"]
+        content = choice.get("content", "")
+        raw_calls: list[Any] = choice.get("tool_calls") or []
+        # https://developers.openai.com/api/reference/resources/chat#(resource)%20chat.completions%20%3E%20(model)%20chat_completion_message_tool_call%20%3E%20(schema)
+        tool_calls = [
+            ToolCall(
+                style="openai",
+                index=tc.get("index", 0),
+                id=tc["id"],
+                name=tc["function"]["name"],
+                args=json.loads(tc["function"]["arguments"]),  # packaged as JSON - a dictionary
+            )
+            for tc in raw_calls
+        ]
+        return LLMResponse(content=content, tool_calls=tool_calls)
+
+    def responses_chat(
+        self,
+        messages: list[dict[str, str]],
+        tools: list[dict[str, object]] | None = None,
+        response_format: dict[str, object] | None = None,
+        temperature: float = 0.0,
+        max_tokens: int = 0,
+        text_format: str | None = None,
+    ) -> LLMResponse:
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        input_list: list[dict[str, Any]] = []
+        instructions: str | None = None
+        for msg in messages:
+            if msg["role"] == "system":
+                instructions = msg["content"]
+            elif msg["role"] == "assistant":
+                input_list.append({"role": "assistant", "content": msg["content"]})
+            elif msg["role"] == "tool":
+                input_list.append({"role": "assistant", "content": msg["content"]})
+            else:
+                input_list.append({"role": "user", "content": msg["content"]})
+
+        body: dict[str, Any] = {"model": self.model, "input": input_list}
+        if instructions is not None:
+            body["instructions"] = instructions
+        if tools is not None:
+            body["tools"] = tools
+        text: dict[str, Any] = {}
+        if text_format is not None:
+            text["format"] = text_format
+        if text:
+            body["text"] = text
 
         resp = requests.post(
-            f"{self.base_url}/chat/completions",
+            f"{self.base_url}/responses",
             headers=headers,
             json=body,
         )
         resp.raise_for_status()
         data: Any = resp.json()
         logger.info("<<< Response:\n%s", _truncate(data))
-        content = data["choices"][0]["message"]["content"]
-        assert isinstance(content, str)
-        return content
+
+        content: str | None = None
+        tool_calls: list[ToolCall] = []
+        for item in data.get("output", []):
+            if item["type"] == "message":
+                for part in item.get("content", []):
+                    if part["type"] == "output_text":
+                        content = part["text"]
+            elif item["type"] == "function_call":
+                tool_calls.append(
+                    ToolCall(
+                        style="openai",
+                        index=item.get("index", 0),
+                        id=item["id"],
+                        name=item["name"],
+                        args=json.loads(item["arguments"]),
+                    )
+                )
+        return LLMResponse(content=content or "", tool_calls=tool_calls)

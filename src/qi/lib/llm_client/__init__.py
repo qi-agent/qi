@@ -1,5 +1,6 @@
 from qi.lib.llm_client._google import GoogleLLMClient
 from qi.lib.llm_client._openai import OpenAILLMClient
+from qi.lib.llm_client._types import LLMResponse, ToolCall
 
 
 class LLMClient:
@@ -13,4 +14,4 @@ class LLMClient:
         return OpenAILLMClient(base_url, model, api_key=api_key)
 
 
-__all__ = ["LLMClient"]
+__all__ = ["LLMClient", "LLMResponse", "ToolCall", "GoogleLLMClient", "OpenAILLMClient"]

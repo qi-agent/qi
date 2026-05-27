@@ -1,4 +1,4 @@
-"""Response handler for LLM JSONL responses and tool execution."""
+"""Response handler for LLM structured JSON responses and native tool execution."""
 
 import json
 import logging
@@ -8,13 +8,16 @@ from typing import Any
 from rich.console import Console
 from rich.markdown import Markdown
 
+from qi.lib.llm_client._types import ToolCall
+
 logger = logging.getLogger(__name__)
 console = Console()
 
 ToolMap = dict[str, Any]
+FnTool = Any
 
 
-def _truncate(obj: object, max_len: int = 500) -> str:
+def _truncate(obj: object, max_len: int = 5000) -> str:
     s = str(obj)
     if len(s) > max_len:
         s = s[:max_len] + f"... (truncated, {len(s)} total chars)"
@@ -35,20 +38,6 @@ DEFAULT_TOOLS: ToolMap = {
     "ReadFile": _read_file,
 }
 
-_TOOL_PARAMS: dict[str, tuple[str, ...]] = {
-    "ReadFile": ("path", "start", "end"),
-}
-
-
-def _normalize_args(tool_name: str, args: Any) -> dict[str, Any]:
-    if isinstance(args, dict):
-        return args
-    if isinstance(args, list):
-        params = _TOOL_PARAMS.get(tool_name)
-        if params:
-            return dict(zip(params, args))
-    return {}
-
 
 def _strip_code_fence(content: str) -> str:
     content = re.sub(r'\A```\w*\n?', '', content)
@@ -56,55 +45,62 @@ def _strip_code_fence(content: str) -> str:
     return content.strip()
 
 
+def _assistant_tool_calls(tool_calls: list[ToolCall]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.name,
+                "arguments": json.dumps(tc.args),
+            },
+        }
+        for tc in tool_calls
+    ]
+
+
 def handle_response(
     content: str,
-    tool_map: ToolMap | None = None,
+    tool_calls: list[ToolCall],
 ) -> tuple[list[dict[str, str]] | None, bool]:
-    if tool_map is None:
-        tool_map = DEFAULT_TOOLS
-
     content = _strip_code_fence(content)
-    reply_messages: list[dict[str, str]] = []
+    reply_messages: list[dict[str, Any]] = []
     done = False
     try:
-        body = json.loads(content)
+        body = json.loads(content) if content else []
         if isinstance(body, dict):
             items = body.get("messages", [body])
         else:
             items = body if isinstance(body, list) else [body]
+
         for item in items:
             match item.get("type"):
 
                 case "thought":
                     content = item.get("content", "")
                     logger.debug("Thought: %s", content)
-                    console.print(content, style="dim", soft_wrap=True)
+                    console.print(content, style="dim", soft_wrap=True, crop=False, overflow="fold")
 
                 case "reply":
-                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True)
+                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True, crop=False, overflow="fold")
 
                 case "ask":
-                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True)
+                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True, crop=False, overflow="fold")
                     answer = console.input("[bold cyan]> [/bold cyan]")
                     reply_messages.append({"role": "user", "content": answer})
 
                 case "conclusion":
-                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True)
+                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True, crop=False, overflow="fold")
                     done = True
 
                 case "call":
-                    tool_name = item.get("tool", "")
-                    args = _normalize_args(tool_name, item.get("args", {}))
-                    console.print(f"[blue]{tool_name}[/blue] [dim]{json.dumps(args)}[/dim]", soft_wrap=True)
-                    tool_fn = tool_map.get(tool_name)
-                    if tool_fn is None:
-                        logger.error(f"Unknown tool: {tool_name}")
-                        done = True
-                    else:
-                        result = tool_fn(**args)
-                        logger.info("Tool result:\n%s\n=============", _truncate(result))
-                        reply_messages.append({"role": "tool", "content": result})
-
+                    # inline assistant message tool call - Google API does this
+                    # {"type": "call", "api": "default_api:ReadFile", "parameters": ["olaf.txt"]}
+                    reply_messages.append({"role": "assistant", "content": "", "tool_calls": [item]})
+                    call_res = handle_tool_calls([
+                        ToolCall(name=item["api"].removeprefix("default_api:"), args=item["parameters"])
+                    ])
+                    reply_messages.append(call_res[0])
                 case _:
                     done = True
                     logger.warning("Unknown type: %s", item.get("type", "unknown"))
@@ -113,4 +109,47 @@ def handle_response(
         logger.error(f"Unable to parse JSON: {e}")
         logger.error(f"Full response:\n{content}")
 
+    # top-level tool calls
+    if tool_calls:
+        tool_msgs = handle_tool_calls(tool_calls)
+        reply_messages.extend(tool_msgs)
+
     return reply_messages, done
+
+
+def handle_tool_calls(
+    tool_calls: list[ToolCall],
+    tool_map: ToolMap | None = None,
+) -> list[dict[str, str]]:
+    if tool_map is None:
+        tool_map = DEFAULT_TOOLS
+
+    messages: list[dict[str, str]] = []
+    for tc in tool_calls:
+        console.print(f"[blue]{tc.name}[/blue] [dim]{json.dumps(tc.args)}[/dim]", soft_wrap=True)
+        tool_fn = tool_map.get(tc.name)
+        if tool_fn is None:
+            logger.error(f"Unknown tool: {tc.name}")
+            messages.append({
+                "role": "tool",
+                "name": tc.name,
+                "content": f"ERROR: Unkonwn tool {tc.name}",
+            })
+            continue
+
+        if isinstance(tc.args, (list, tuple)):
+            result = tool_fn(*tc.args)
+        else:
+            result = tool_fn(**tc.args)
+
+        logger.info("Tool result:\n%s\n=============", _truncate(result))
+
+        # https://developers.openai.com/api/docs/guides/function-calling#handling-function-calls
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tc.id,
+            "name": tc.name,
+            # "type": "tool_output",
+            "content": result,
+        })
+    return messages

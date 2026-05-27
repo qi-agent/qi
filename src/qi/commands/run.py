@@ -3,10 +3,13 @@
 import argparse
 import logging
 import time
+from typing import Any
 
 from qi.lib.config import load
 from qi.lib.handler import handle_response
 from qi.lib.llm_client import LLMClient
+from qi.lib.llm_client._google import GoogleLLMClient
+from qi.lib.schema import GOOGLE_TOOLS, OPENAI_TOOLS, RESPONSE_SCHEMA
 from qi.prompts.master import SYSTEM_PROMPT
 
 CHARS_PER_TOKEN = 4
@@ -16,8 +19,7 @@ FILE_READ_HEAD_CHARS = 1024
 logger = logging.getLogger(__name__)
 
 
-def _build_messages(prompt_message: str, file_paths: list[str]) -> list[dict[str, str]]:
-    # work out how many files there are
+def _build_messages(prompt_message: str, file_paths: list[str]) -> list[dict[str, Any]]:
     files_instruction = ""
     if len(file_paths) == 1:
         files_instruction = (
@@ -27,7 +29,7 @@ def _build_messages(prompt_message: str, file_paths: list[str]) -> list[dict[str
     elif len(file_paths) > 1:
         files_instruction = (
             f"The following {len(file_paths)} messages contain the contents of the input files relating to this instruction:\n" +
-            "\n- ".join(file_paths)
+            "\n- ".join(f"- {p}" for p in file_paths)
         )
 
     if not prompt_message:
@@ -42,7 +44,7 @@ def _build_messages(prompt_message: str, file_paths: list[str]) -> list[dict[str
     for file_path in file_paths:
         try:
             with open(file_path) as f:
-                content = f.read()
+                content = f.read(FILE_READ_HEAD_CHARS)
         except OSError as e:
             logger.error(f"Error reading {file_path}: {e}")
             raise
@@ -89,11 +91,24 @@ def run(argv: list[str]) -> int:
         api_key=settings.api_key,
     )
 
+    tools = GOOGLE_TOOLS if isinstance(client, GoogleLLMClient) else OPENAI_TOOLS
+
+    response_format: dict[str, Any] = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "qi_response",
+            "strict": True,
+            "schema": RESPONSE_SCHEMA,
+        },
+    }
+
     while True:
         logger.info(">>>>>>>>>>>>\n" + "\n".join([str(x) for x in messages]))
         try:
             response = client.chat(
                 messages,
+                tools=tools,
+                response_format=response_format,
                 temperature=settings.temperature,
                 max_tokens=settings.max_tokens,
             )
@@ -101,15 +116,17 @@ def run(argv: list[str]) -> int:
             logger.error(f"LLM call failed: {e}")
             return 1
 
-        outputs, done = handle_response(response)
-        if done:
-            break
+        outputs, done = handle_response(response.content, response.tool_calls)
 
+        if response.content or response.tool_calls:
+            assistant_msg = {"role": "assistant", "content": response.content or "", "tool_calls": [tc.as_dict() for tc in response.tool_calls]}
+            messages.append(assistant_msg)
         if outputs:
-            messages.append({"role": "assistant", "content": response})
             messages.extend(outputs)
 
+        if done:
+            break
         logger.info("Sleeping...")
-        time.sleep(5)
+        time.sleep(1)
 
     return 0

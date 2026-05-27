@@ -1,5 +1,5 @@
 import logging
-from typing import cast, override
+from typing import override
 
 from rich.console import Console
 from rich.errors import MissingStyle
@@ -35,8 +35,10 @@ class _StyledLogValue:
 
 class QiLogFormatter(logging.Formatter):
     def _rich_format(self, style: logging.PercentStyle, record: logging.LogRecord) -> str:
-        defaults = cast(dict[str, str], style._defaults or {})
-        values = defaults | record.__dict__
+        # ### commented out because mypy doesn't like that we access PercentStyle._defaults
+        # defaults = cast(dict[str, str], style._defaults or {})
+        # values = defaults | record.__dict__
+        values = record.__dict__
         styled_values = {k: _StyledLogValue(str(v), f"logging.{k}") for k, v in values.items()}
         styled_values["levelname"] = _StyledLogValue(
             record.levelname.ljust(8), f"logging.level.{record.levelname.lower()}"
