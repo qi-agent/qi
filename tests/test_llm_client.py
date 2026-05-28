@@ -246,7 +246,14 @@ def test_google_chat_tools_in_body() -> None:
         "candidates": [{"content": {"parts": [{"text": "OK"}]}}],
     }
 
-    tools = [{"functionDeclarations": [{"name": "ReadFile", "parameters": {"type": "object"}}]}]
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "ReadFile",
+            "description": "Read a file.",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+        },
+    }]
 
     with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp) as mock_post:
         client = LLMClient.create(
@@ -260,7 +267,17 @@ def test_google_chat_tools_in_body() -> None:
         )
 
     body = mock_post.call_args.kwargs["json"]
-    assert body["tools"] == tools
+    assert body["tools"] == [
+        {
+            "functionDeclarations": [
+                {
+                    "name": "ReadFile",
+                    "description": "Read a file.",
+                    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+                }
+            ],
+        },
+    ]
 
 
 def test_google_parses_function_call() -> None:

@@ -22,20 +22,46 @@ DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 
 class GoogleLLMClient:
     def __init__(
-        self, base_url: str, model: str, *, api_key: str | None = None
+        self,
+        base_url: str,
+        model: str,
+        tools: list[dict[str, object]] | None = None,
+        *,
+        api_key: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.tools = tools or []
         self.api_key = api_key
+
+    @staticmethod
+    def _format_tool_declarations(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result: list[dict[str, object]] = []
+        for t in tools:
+            fn: dict[str, Any] = t.get("function", {})
+            assert isinstance(fn, dict)
+            result.append({
+                "functionDeclarations": [
+                    {
+                        "name": fn.get("name", ""),
+                        "description": fn.get("description", ""),
+                        "parameters": fn.get("parameters", {}),
+                    }
+                ],
+            })
+        return result
 
     def chat(
         self,
         messages: list[dict[str, str]],
-        tools: list[dict[str, object]] | None = None,
+        response_format: dict[str, object] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 0,
+        tools: list[dict[str, object]] | None = None,
         **kwargs: object,
     ) -> LLMResponse:
+        if tools or self.tools:
+            tools = self._format_tool_declarations(tools or self.tools)
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
             headers["X-goog-api-key"] = self.api_key
@@ -48,7 +74,7 @@ class GoogleLLMClient:
             if role == "system":
                 system_instruction = {"parts": [{"text": msg["content"]}]}
             elif role == "tool":
-                tool_response = {
+                tool_response: dict[str, Any] = {
                     "role": "function",
                     "parts": [
                         {

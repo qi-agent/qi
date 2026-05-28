@@ -1,4 +1,4 @@
-"""JSON schema for structured LLM response and tool definitions."""
+"""JSON schema for structured LLM response."""
 
 from typing import Any
 
@@ -65,40 +65,4 @@ RESPONSE_SCHEMA: dict[str, Any] = {
     "required": ["messages"],
 }
 
-OPENAI_TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "ReadFile",
-            "description": "Read contents of a file from the local filesystem by line range.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to read",
-                    },
-                    "start": {
-                        "type": "integer",
-                        "description": "Character index to start reading from (0-based); defaults to 0",
-                    },
-                    "end": {
-                        "type": "integer",
-                        "description": "Character index to stop at (exclusive); omit to read to end of file",
-                    },
-                },
-                "required": ["path"],
-            },
-        },
-    },
-]
-
-
-def _openai_tool_to_google(tool: dict[str, Any]) -> dict[str, Any]:
-    fn = tool["function"]
-    return {"functionDeclarations": [{"name": fn["name"], "description": fn.get("description", ""), "parameters": fn["parameters"]}]}
-
-
-GOOGLE_TOOLS: list[dict[str, Any]] = [_openai_tool_to_google(t) for t in OPENAI_TOOLS]
-
-__all__ = ["RESPONSE_SCHEMA", "OPENAI_TOOLS", "GOOGLE_TOOLS"]
+__all__ = ["RESPONSE_SCHEMA"]

@@ -8,9 +8,9 @@ from typing import Any
 from qi.lib.config import load
 from qi.lib.handler import handle_response
 from qi.lib.llm_client import LLMClient
-from qi.lib.llm_client._google import GoogleLLMClient
-from qi.lib.schema import GOOGLE_TOOLS, OPENAI_TOOLS, RESPONSE_SCHEMA
+from qi.lib.schema import RESPONSE_SCHEMA
 from qi.prompts.master import SYSTEM_PROMPT
+from qi.tools import TOOL_SCHEMAS
 
 CHARS_PER_TOKEN = 4
 FILE_READ_HEAD_CHARS = 1024
@@ -91,8 +91,6 @@ def run(argv: list[str]) -> int:
         api_key=settings.api_key,
     )
 
-    tools = GOOGLE_TOOLS if isinstance(client, GoogleLLMClient) else OPENAI_TOOLS
-
     response_format: dict[str, Any] = {
         "type": "json_schema",
         "json_schema": {
@@ -107,7 +105,7 @@ def run(argv: list[str]) -> int:
         try:
             response = client.chat(
                 messages,
-                tools=tools,
+                tools=TOOL_SCHEMAS,
                 response_format=response_format,
                 temperature=settings.temperature,
                 max_tokens=settings.max_tokens,

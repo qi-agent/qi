@@ -22,19 +22,25 @@ DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
 class OpenAILLMClient:
     def __init__(
-        self, base_url: str, model: str, *, api_key: str | None = None
+        self,
+        base_url: str,
+        model: str,
+        tools: list[dict[str, object]] | None = None,
+        *,
+        api_key: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.tools = tools
         self.api_key = api_key
 
     def chat(
         self,
         messages: list[dict[str, str]],
-        tools: list[dict[str, object]] | None = None,
         response_format: dict[str, object] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 0,
+        tools: list[dict[str, object]] | None = None,
         **kwargs: object,
     ) -> LLMResponse:
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -48,8 +54,8 @@ class OpenAILLMClient:
         }
         if max_tokens:
             body["max_tokens"] = max_tokens
-        if tools is not None:
-            body["tools"] = tools
+        if tools or self.tools:
+            body["tools"] = tools or self.tools
         if response_format is not None:
             body["response_format"] = response_format
 

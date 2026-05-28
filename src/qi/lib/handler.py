@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from qi.lib.llm_client._types import ToolCall
+from qi.tools import TOOL_MAP
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -22,21 +23,6 @@ def _truncate(obj: object, max_len: int = 5000) -> str:
     if len(s) > max_len:
         s = s[:max_len] + f"... (truncated, {len(s)} total chars)"
     return s
-
-
-def _read_file(path: str, start: int = 0, end: int | None = None) -> str:
-    with open(path) as f:
-        lines = f.readlines()
-    if end is not None:
-        lines = lines[start:end]
-    elif start > 0:
-        lines = lines[start:]
-    return "".join(lines)
-
-
-DEFAULT_TOOLS: ToolMap = {
-    "ReadFile": _read_file,
-}
 
 
 def _strip_code_fence(content: str) -> str:
@@ -122,7 +108,7 @@ def handle_tool_calls(
     tool_map: ToolMap | None = None,
 ) -> list[dict[str, str]]:
     if tool_map is None:
-        tool_map = DEFAULT_TOOLS
+        tool_map = TOOL_MAP
 
     messages: list[dict[str, str]] = []
     for tc in tool_calls:
@@ -138,9 +124,9 @@ def handle_tool_calls(
             continue
 
         if isinstance(tc.args, (list, tuple)):
-            result = tool_fn(*tc.args)
+            result = tool_fn(*tc.args)  # type: ignore[arg-type]
         else:
-            result = tool_fn(**tc.args)
+            result = tool_fn(**tc.args)  # type: ignore[arg-type]
 
         logger.info("Tool result:\n%s\n=============", _truncate(result))
 
