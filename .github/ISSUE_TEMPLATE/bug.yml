@@ -1,0 +1,43 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Steps to reproduce, including the exact command run.
+      placeholder: |
+        qi run -p "..." file.py
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `qi --version`
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: LLM provider
+      description: e.g. OpenAI, Google, Anthropic, local
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Session log
+      description: Attach or paste the session JSONL file (`.qi/sessions/*.jsonl`)
+      render: json
