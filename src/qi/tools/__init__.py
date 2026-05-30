@@ -1,9 +1,12 @@
+from typing import Any
+
+from qi.tools.bash import BashTool
 from qi.tools.read_file import ReadFileTool
 
-_TOOLS = [ReadFileTool()]
+_TOOLS: list[Any] = [BashTool(), ReadFileTool()]
 
-TOOL_MAP = {tool.NAME: tool for tool in _TOOLS}
-TOOL_SCHEMAS = [tool.schema for tool in _TOOLS]
+TOOL_MAP: dict[str, Any] = {tool.name: tool for tool in _TOOLS}
+TOOL_SCHEMAS: list[dict[str, Any]] = [tool.schema for tool in _TOOLS]
 
 
 __all__ = [

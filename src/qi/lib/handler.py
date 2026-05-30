@@ -31,20 +31,6 @@ def _strip_code_fence(content: str) -> str:
     return content.strip()
 
 
-def _assistant_tool_calls(tool_calls: list[ToolCall]) -> list[dict[str, Any]]:
-    return [
-        {
-            "id": tc.id,
-            "type": "function",
-            "function": {
-                "name": tc.name,
-                "arguments": json.dumps(tc.args),
-            },
-        }
-        for tc in tool_calls
-    ]
-
-
 def handle_response(
     content: str,
     tool_calls: list[ToolCall],
@@ -124,9 +110,9 @@ def handle_tool_calls(
             continue
 
         if isinstance(tc.args, (list, tuple)):
-            result = tool_fn(*tc.args)  # type: ignore[arg-type]
+            result = tool_fn(*tc.args)
         else:
-            result = tool_fn(**tc.args)  # type: ignore[arg-type]
+            result = tool_fn(**tc.args)
 
         logger.info("Tool result:\n%s\n=============", _truncate(result))
 
