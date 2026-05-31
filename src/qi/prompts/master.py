@@ -18,7 +18,7 @@ Each element in the "messages" array can be:
 
 Keep going until one of the following is true:
 - The task you are given is complete. Reply with the "conclusion" type response.
-- You need to ask the user a question
+- You need to ask the user a question.
 
 
 """

@@ -8,12 +8,11 @@ from qi import __version__
 from qi.cli import HELP, main
 
 
-def test_no_args_routes_to_run_help(monkeypatch: pytest.MonkeyPatch) -> None:
-    mock_run = Mock(return_value=0)
-    monkeypatch.setattr("qi.commands.run.run", mock_run)
+def test_no_args_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main([])
+    out, _ = capsys.readouterr()
     assert rc == 0
-    mock_run.assert_called_once_with(["--help"])
+    assert out == HELP + "\n"
 
 
 def test_help_flag_prints_help(capsys: pytest.CaptureFixture[str]) -> None:

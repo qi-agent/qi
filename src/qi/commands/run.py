@@ -33,7 +33,7 @@ def _build_messages(prompt_message: str, file_paths: list[str]) -> list[dict[str
         )
 
     if not prompt_message:
-        prompt_message = "Analyse the following."
+        prompt_message = "Analyse the following file(s) then exit."
 
     prompt_instruction = f"INSTRUCTION: {prompt_message}\n\n" + files_instruction
 
