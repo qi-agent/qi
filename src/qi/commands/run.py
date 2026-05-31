@@ -6,10 +6,10 @@ import time
 from typing import Any
 
 from qi.lib.config import load
+from qi.lib.context import get_system_prompt
 from qi.lib.handler import handle_response
 from qi.lib.llm_client import LLMClient
 from qi.lib.schema import RESPONSE_SCHEMA
-from qi.prompts.master import SYSTEM_PROMPT
 from qi.tools import TOOL_SCHEMAS
 
 CHARS_PER_TOKEN = 4
@@ -38,7 +38,7 @@ def _build_messages(prompt_message: str, file_paths: list[str]) -> list[dict[str
     prompt_instruction = f"INSTRUCTION: {prompt_message}\n\n" + files_instruction
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": get_system_prompt()},
         {"role": "user", "content": prompt_instruction},
     ]
     for file_path in file_paths:
