@@ -51,18 +51,18 @@ def handle_response(
                 case "thought":
                     content = item.get("content", "")
                     logger.debug("Thought: %s", content)
-                    console.print(content, style="dim", soft_wrap=True, crop=False, overflow="fold")
+                    console.print(content, style="dim")
 
                 case "reply":
-                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True, crop=False, overflow="fold")
+                    console.print(Markdown(item["content"]), style="bold")
 
                 case "ask":
-                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True, crop=False, overflow="fold")
+                    console.print(Markdown(item["content"]), style="bold")
                     answer = console.input("[bold cyan]> [/bold cyan]")
                     reply_messages.append({"role": "user", "content": answer})
 
                 case "conclusion":
-                    console.print(Markdown(item["content"]), style="bold", soft_wrap=True, crop=False, overflow="fold")
+                    console.print(Markdown(item["content"]), style="bold")
                     done = True
 
                 case "call":
