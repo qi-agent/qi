@@ -6,11 +6,12 @@ authors = [
     { name = "Wil Tan", email = "wil@dready.org" }
 ]
 license = "ISC"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: ISC License (ISCL)",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development",
