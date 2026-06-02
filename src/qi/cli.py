@@ -11,12 +11,14 @@ from qi.lib.logging import QiLogHandler
 SUBCOMMANDS: dict[str, str] = {
     "run": "qi.commands.run",
     "ping": "qi.commands.ping",
+    "init": "qi.commands.init",
 }
 
 HELP = """Usage: qi [<options>] <file>
        qi <command> [<args>]
 
 Commands:
+  init   Scaffold a .qi project directory
   run    Process a prompt or analyse given files (default)
   ping   Ping the server
 

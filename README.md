@@ -14,18 +14,41 @@
 Qi connects your local files to an LLM of your choice, executes tools natively,
 and loops until the job is done. Designed for pipes, sessions, and zero ceremony.
 
-## Quickstart
+## Getting Started
+
+### 1. Install
 
 ```sh
 pip install qi-agent
-export QI_API_KEY="sk-..."
-qi run -p "fix the bug in" main.py
 ```
 
-Can also run with `uv`:
+Or with `uv`:
 
 ```sh
-uv tool run qi-agent run -p "..." main.py
+uv tool run qi-agent
+```
+
+### 2. Init a project
+
+```sh
+qi init
+```
+
+This creates a `.qi/` directory with a `config.toml` and a `sessions/` folder.
+Edit `.qi/config.toml` to point at your LLM.
+
+For example, with [Ollama](https://ollama.com):
+
+```toml
+api_key = ""
+model = "qwen2.5:7b"
+base_url = "http://localhost:11434/v1"
+```
+
+### 3. Run
+
+```sh
+qi run -p "fix the bug in" main.py
 ```
 
 ## Philosophy
@@ -57,6 +80,20 @@ Process files with an LLM. The default command.
 
 `file` is one or more file paths to read into context. If none provided, a
 prompt is required.
+
+### `qi init`
+
+```
+qi init [--dir <path>] [--force]
+```
+
+Scaffold a `.qi/` project directory with a default `config.toml` and
+`sessions/` folder.
+
+| Flag | Description |
+|---|---|
+| `--dir <path>` | Target directory (default: current directory) |
+| `-f`, `--force` | Overwrite existing `config.toml` |
 
 ### `qi ping`
 
