@@ -1,0 +1,3 @@
+
+class CorruptedFileError(ValueError):
+    pass
