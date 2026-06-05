@@ -132,7 +132,7 @@ class GoogleLLMClient:
                     ToolCall(
                         style="google",
                         index=0,
-                        id=fc.get("name", ""),
+                        id=fc.get("id", ""),
                         name=fc["name"],
                         args=dict(fc.get("args", {})),
                     )

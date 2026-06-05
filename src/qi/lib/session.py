@@ -177,7 +177,7 @@ class Session:
     def log_tool_result(self, content: str, tool_name: str, tool_call_id: str = "") -> None:
         return self.log_record(
             type_=RecordType.MESSAGE.value,
-            role=Role.TOOL,
+            role=Role.TOOL.value,
             content=content,
             tool_name=tool_name,
             tool_call_id=tool_call_id,
