@@ -174,7 +174,7 @@ def run(argv: list[str]) -> int:
             if res[LogKey.ROLE] == Role.TOOL:
                 session.log_tool_result(res[LogKey.CONTENT], res[LogKey.NAME], res[LogKey.TOOL_CALL_ID])
             else:
-                session.log_message(res[LogKey.ROLE], res[LogKey.CONTENT], res[LogKey.NAME], res.get(LogKey.TOOL_CALLS))
+                session.log_message(res[LogKey.ROLE], res[LogKey.CONTENT], res.get(LogKey.TOOL_CALLS))
         if done:
             break
 

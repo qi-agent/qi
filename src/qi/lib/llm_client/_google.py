@@ -53,7 +53,7 @@ class GoogleLLMClient:
 
     def chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, str | dict[str, Any] | list[Any]]],
         response_format: dict[str, object] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 0,

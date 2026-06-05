@@ -40,17 +40,17 @@ def _strip_code_fence(content: str) -> str:
 def handle_response(
     content: str | None,  # OpenRouter would give content = None when combined with tool calling
     tool_calls: list[ToolCall],
-) -> tuple[list[dict[str, str]] | None, bool]:
+) -> tuple[list[dict[str, Any]] | None, bool]:
     content = _strip_code_fence(content or "")
     reply_messages: list[dict[str, Any]] = []
     done = False
     try:
         body = json.loads(content) if content else []
-        items: list[dict[str, Any]] 
+        items: list[dict[str, Any]]
         if isinstance(body, dict):
             items = body.get("messages", [body])
         else:
-            items: list[dict[str, Any]] = body if isinstance(body, list) else [body]
+            items = body if isinstance(body, list) else [body]
 
         for item in items:
             match item.get(MessageKey.TYPE):
