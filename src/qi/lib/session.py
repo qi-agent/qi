@@ -90,8 +90,12 @@ class Session:
         return session
 
     @property
-    def messages(self) -> list[LogRecord]:
-        return [r for r in self._messages if r[LogKey.TYPE] == RecordType.MESSAGE]
+    def messages(self, keys: set[str] | None = None) -> list[LogRecord]:
+        keys = keys or {LogKey.ROLE, LogKey.CONTENT, LogKey.NAME, LogKey.TOOL_CALLS, LogKey.TOOL_CALL_ID}
+        def filter_for_keys(d: dict[str, Any]) -> dict[str, Any]:
+            return {k: v for k, v in d.items() if k in keys}
+
+        return [filter_for_keys(r) for r in self._messages if r[LogKey.TYPE] == RecordType.MESSAGE]
 
     def _update_state(
             self,
