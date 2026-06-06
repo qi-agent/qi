@@ -37,6 +37,20 @@ def _strip_code_fence(content: str) -> str:
     return content.strip()
 
 
+def parse_json_best_effort(s: str) -> dict[str, Any] | list[dict[str, Any]]:
+    try:
+        body = json.loads(s)
+        return body
+    except json.JSONDecodeError as e:
+        # handle extra trailing content
+        if e.msg == "Extra data" and e.pos >= 2:  # expect at least 2 characters in JSON: [] or {}
+            logger.warning(f"Trailing data ({len(e.doc) - e.pos} chars) found in LLM response while parsing as JSON: {e.doc[e.pos:e.pos+200]}...")
+            logger.warning(f"Trying to parse the preceeding content")
+            return json.loads(s[:e.pos])
+        else:
+            raise  # can't handle, re-raise
+
+
 def handle_response(
     content: str | None,  # OpenRouter would give content = None when combined with tool calling
     tool_calls: list[ToolCall],
@@ -47,7 +61,7 @@ def handle_response(
     error = False
     items: list[dict[str, Any]] = []
     try:
-        body = json.loads(content) if content else []
+        body = parse_json_best_effort(content) if content else []
         if isinstance(body, dict):
             items = body.get("messages", [body])
         else:
