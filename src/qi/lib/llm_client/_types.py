@@ -32,9 +32,10 @@ class ToolCall:
     def as_dict_google(self) -> dict[str, object]:
         # may not be needed, as this is inline only
         return {
+            "id": self.id,
             "type": "call",
-            "api": f"default_api:{self.name}",
-            "parametres": json.dumps(self.args),
+            "name": self.name,
+            "parameters": json.dumps(self.args),
         }
 
 @dataclass

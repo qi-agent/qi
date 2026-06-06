@@ -88,7 +88,7 @@ class GoogleLLMClient:
                 contents.append(tool_response)
             else:
                 contents.append({
-                    "role": "model" if role == "assistant" else "user",
+                    "role": "model" if role == "assistant" else "user",  # For google, rename "assistant" to "model"
                     "parts": [{"text": msg["content"]}],
                 })
 
