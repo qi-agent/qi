@@ -44,9 +44,10 @@ def handle_response(
     content = _strip_code_fence(content or "")
     reply_messages: list[dict[str, Any]] = []
     done = False
+    error = False
+    items: list[dict[str, Any]] = []
     try:
         body = json.loads(content) if content else []
-        items: list[dict[str, Any]]
         if isinstance(body, dict):
             items = body.get("messages", [body])
         else:
@@ -85,8 +86,17 @@ def handle_response(
                     logger.warning("Unknown type: %s", item.get(MessageKey.TYPE, "unknown"))
 
     except json.JSONDecodeError as e:
-        logger.error(f"Unable to parse JSON: {e}")
-        logger.error(f"Full response:\n{content}")
+        logger.warning(f"Unable to parse LLM response as JSON. Correcting it")
+        logger.info(f"[ERR] LLM response is not valid JSON: {e}\n  Full response:\n{content}", exc_info=True)
+        error = True
+        # remind the model to give us structured output
+        reply_messages.append({
+            LogKey.ROLE.value: Role.SYSTEM.value,
+            LogKey.CONTENT.value: (
+                "Could not parse the content of the `messages` key as JSON (after removing any leading / trailing code fences) "
+                "in your last response. Stick to the stipulated format and do not make up your own"
+            )
+        })
 
     # top-level tool calls
     if tool_calls:
@@ -96,8 +106,10 @@ def handle_response(
             tool_msgs = handle_tool_calls(tool_calls)
             reply_messages.extend(tool_msgs)
     else:
-        # done if no tool calls and no asks
-        done = done or not {MessageType.ASK, MessageType.CALL}.union({item[MessageKey.TYPE] for item in items})
+        # done if no error, no tool calls and no asks
+        done = not error and (
+            done or not {MessageType.ASK, MessageType.CALL}.union({item[MessageKey.TYPE] for item in items})
+        )
 
     return reply_messages, done
 
