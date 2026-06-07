@@ -3,7 +3,9 @@
 import argparse
 import importlib
 import logging
+import os
 import sys
+from datetime import datetime
 
 from qi import __version__
 from qi.lib.logging import QiLogHandler
@@ -53,6 +55,34 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, str, 
     return parsed, "run", args
 
 
+def setup_logging() -> None:
+    """Configure logging for the application."""
+    # Console handler: only WARNING and above
+    console_handler = QiLogHandler()
+    console_handler.setLevel(logging.WARNING)
+    # The QiLogHandler will set its own formatter in the format method
+
+    # File handler: INFO and above to a file in .qi/logs/YYYYmmddTHHMMSS.log
+    log_dir = os.path.join(".qi", "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    log_file = os.path.join(log_dir, f"{timestamp}.log")
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    file_formatter = logging.Formatter(
+        fmt="%(asctime)s %(levelname)-7s %(name)s.%(funcName)s:%(lineno)s %(message)s",
+        datefmt="[%Y-%m-%d %H:%M:%S]"
+    )
+    file_handler.setFormatter(file_formatter)
+
+    # Configure root logger with both handlers, forcing any existing handlers to be removed
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[console_handler, file_handler],
+        force=True,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args, subcommand, remaining = parse_args(argv)
 
@@ -64,12 +94,7 @@ def main(argv: list[str] | None = None) -> int:
             print(HELP)
             return 0
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)7s %(name)s.%(funcName)s.:%(lineno)s %(message)s",
-        datefmt="[%Y-%m-%d %H:%M:%S]",
-        handlers=[QiLogHandler()],
-    )
+    setup_logging()
 
     if subcommand in SUBCOMMANDS:
         mod = importlib.import_module(SUBCOMMANDS[subcommand])
