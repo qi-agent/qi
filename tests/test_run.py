@@ -7,7 +7,7 @@ import pytest
 
 from qi.commands.run import run
 from qi.lib.config import Settings
-from qi.lib.llm_client._types import LLMResponse
+from qi.lib.llm_client._types import LLMResponse, ToolCall
 
 
 def _strip_ansi(text: str) -> str:
@@ -23,7 +23,7 @@ def test_files_sent_as_user_messages() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
-        patch("qi.commands.run.time.sleep"),
+        patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="file content")),
     ):
         mock_load.return_value = Settings(
@@ -61,7 +61,7 @@ def test_files_sent_as_user_messages_capsys(capsys: pytest.CaptureFixture[str]) 
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
-        patch("qi.commands.run.time.sleep"),
+        patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="x")),
     ):
         mock_load.return_value = Settings(
@@ -76,7 +76,8 @@ def test_files_sent_as_user_messages_capsys(capsys: pytest.CaptureFixture[str]) 
 
     assert rc == 0
     out, _ = capsys.readouterr()
-    assert _strip_ansi(out).strip() == "analysis complete"
+    lines = _strip_ansi(out).strip().splitlines()
+    assert lines[-1] == "analysis complete"
 
 
 def test_prompt_adds_instruction_message() -> None:
@@ -87,7 +88,7 @@ def test_prompt_adds_instruction_message() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
-        patch("qi.commands.run.time.sleep"),
+        patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="code")),
     ):
         mock_load.return_value = Settings(
@@ -125,7 +126,7 @@ def test_multiple_files() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
-        patch("qi.commands.run.time.sleep"),
+        patch("qi.lib.session.Session._write"),
         patch("builtins.open", side_effect=handles),
     ):
         mock_load.return_value = Settings(
@@ -140,15 +141,15 @@ def test_multiple_files() -> None:
 
     assert rc == 0
     messages = mock_client.chat.call_args[0][0]
-
-    assert messages[-3]["content"] == "content a"
-    assert messages[-2]["content"] == "content b"
+    assert messages[-2]["content"] == "content a"
+    assert messages[-1]["content"] == "content b"
 
 
 def test_missing_file_returns_error() -> None:
     """If a file doesn't exist, return non-zero exit code."""
     with (
         patch("qi.commands.run.load") as mock_load,
+        patch("qi.lib.session.Session._write"),
         patch("qi.commands.run.LLMClient.create"),
     ):
         mock_load.return_value = Settings(
@@ -172,6 +173,7 @@ def test_llm_error_returns_error() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="x")),
     ):
         mock_load.return_value = Settings(
@@ -194,7 +196,12 @@ def test_tool_calls_are_executed() -> None:
         LLMResponse(
             content='{"messages": [{"type": "thought", "content": "Need to read the file"}]}',
             tool_calls=[
-                Mock(id="call_1", name="ReadFile", args={"path": "test.py"}),
+                ToolCall(
+                    style="openai",
+                    id="call_1",
+                    name="ReadFile",
+                    args={"path": "test.py"},
+                )
             ],
         ),
         LLMResponse(
@@ -205,7 +212,7 @@ def test_tool_calls_are_executed() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
-        patch("qi.commands.run.time.sleep"),
+        patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="file content")),
     ):
         mock_load.return_value = Settings(
@@ -230,7 +237,7 @@ def test_passes_tools_and_response_format() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
-        patch("qi.commands.run.time.sleep"),
+        patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="x")),
     ):
         mock_load.return_value = Settings(

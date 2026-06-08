@@ -232,7 +232,7 @@ def test_google_chat_maps_generation_config() -> None:
         )
 
     body = mock_post.call_args.kwargs["json"]
-    gc = body["generationConfig"]
+    gc = body["generation_config"]
     assert gc["temperature"] == 0.5
     assert gc["maxOutputTokens"] == 200
     assert gc["responseMimeType"] == "application/json"

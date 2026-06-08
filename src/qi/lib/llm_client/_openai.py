@@ -36,7 +36,7 @@ class OpenAILLMClient:
 
     def chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, str | dict[str, Any] | list[Any]]],
         response_format: dict[str, object] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 0,
@@ -56,19 +56,32 @@ class OpenAILLMClient:
             body["max_tokens"] = max_tokens
         if tools or self.tools:
             body["tools"] = tools or self.tools
+            body["tool_choice"] = "required"
         if response_format is not None:
             body["response_format"] = response_format
 
         url = f"{self.base_url}/chat/completions"
 
-        logger.info(">>>>>>>>>>>> Request: POST %s\n%s", url, _truncate(body))
+        logger.info("[INF] >>>>>>>>>>>> Request: POST %s\n%s", url, body)
+
 
         resp = requests.post(url, headers=headers, json=body)
-        resp.raise_for_status()
-        data: Any = resp.json()
-        logger.info("<<< Response:\n%s", _truncate(data))
+        if not resp.ok:
+            logger.info("[ERR] <<<<<<<<<<<< Response: %s %s\n%s", resp.status_code, resp.reason, resp.text)
+            resp.raise_for_status()
 
-        choice = data["choices"][0]["message"]
+        choice: dict[str, Any]
+        try:
+            data: Any = resp.json()
+            logger.info(f"[INF] <<< Response:\n{data}")
+            choice = data["choices"][0]["message"]
+        except Exception as e:
+            logger.warning(f"Error decoding API response: {e}")
+            logger.info(f"[ERR] Error decoding API response: {e}\nRaw content:\n{resp.text}")
+            raise
+
+
+
         content = choice.get("content", "")
         raw_calls: list[Any] = choice.get("tool_calls") or []
         # https://developers.openai.com/api/reference/resources/chat#(resource)%20chat.completions%20%3E%20(model)%20chat_completion_message_tool_call%20%3E%20(schema)
@@ -82,6 +95,8 @@ class OpenAILLMClient:
             )
             for tc in raw_calls
         ]
+        if tool_calls:
+            logger.info(f"Calling {len(tool_calls)} tools: {[x.name for x in tool_calls]}")
         return LLMResponse(content=content, tool_calls=tool_calls)
 
     def responses_chat(

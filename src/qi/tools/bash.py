@@ -1,4 +1,3 @@
-import json
 import logging
 import subprocess
 from typing import Any
@@ -34,25 +33,36 @@ class BashTool:
     ) -> str:
         params = self.params(command=command, workdir=workdir, timeout=timeout)
         logger.info(f"Running command: {params.command}")
+        return_code = 0
+        stdout = ''
+        stderr = ''
         try:
             result = subprocess.run(
-                params.command,
+                params.command.encode(),
                 shell=True,
                 capture_output=True,
                 text=True,
                 cwd=params.workdir,
                 timeout=params.timeout,
             )
+            return_code = result.returncode
+            stdout = result.stdout
+            stderr = result.stderr
         except subprocess.TimeoutExpired as e:
-            out = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
-            err = e.stderr.decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
-            timeout_msg = f"Command timed out after {params.timeout}s"
-            return json.dumps({"exit_code": -1, "stdout": out, "stderr": f"{err}\n{timeout_msg}"})
+            stdout = e.stdout.decode() if e.stdout else ""
+            stderr = e.stderr.decode() if e.stderr else ""
+            return_code = -1
+            stderr += f"\nCommand timed out after {params.timeout}s"
 
-        return json.dumps(
-            {
-                "exit_code": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-        )
+        output = [
+            f"Exit code: {return_code}",
+        ]
+        if stderr:
+            output.append("Stderr is enclosed below in `<stderr>` tags:")
+            output.append(f"<stderr>\n{stderr.replace('<stderr>', '&lt;stderr&gt;').strip()}\n<stderr>")
+        if stdout:
+            output.append("Stdout is enclosed below in `<stdout>` tags:")
+            output.append(f"<stdout>\n{stdout.replace('<stdout>', '&lt;stdout&gt;').strip()}<stdout>")
+        else:
+            output.append("There was no output.")
+        return '\n'.join(output)

@@ -66,7 +66,6 @@ def test_appended_via_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
-        patch("qi.commands.run.time.sleep"),
         patch("builtins.open", mock_open(read_data="x")),
     ):
         from qi.commands.run import run

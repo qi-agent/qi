@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -9,6 +10,7 @@ class ToolCall:
     id: str = ""
     name: str = ""
     args: dict[str, object] | list[object] = field(default_factory=dict[str, object])
+    extra: dict[str, object] = field(default_factory=dict[str, object])
 
     def as_dict(self) -> dict[str, object]:
         if self.style == "openai":
@@ -32,15 +34,16 @@ class ToolCall:
     def as_dict_google(self) -> dict[str, object]:
         # may not be needed, as this is inline only
         return {
-            "type": "call",
-            "api": f"default_api:{self.name}",
-            "parametres": json.dumps(self.args),
+            "id": self.id,
+            "name": self.name,
+            "args": self.args,
         }
 
 @dataclass
 class LLMResponse:
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list[ToolCall])
+    extra: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 __all__ = ["LLMResponse", "ToolCall"]
