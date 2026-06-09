@@ -56,7 +56,7 @@ class OpenAILLMClient:
             body["max_tokens"] = max_tokens
         if tools or self.tools:
             body["tools"] = tools or self.tools
-            body["tool_choice"] = "required"
+            body["tool_choice"] = "auto"
         if response_format is not None:
             body["response_format"] = response_format
 

@@ -159,6 +159,7 @@ def run(argv: list[str]) -> int:
             )
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
+            logger.error(f"More details may be found in {session.file_path}")
             logger.info(f"[ERR] LLM call failed: {e}", exc_info=True)
             return 1
 
