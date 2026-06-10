@@ -68,8 +68,8 @@ def handle_response(
             items = body if isinstance(body, list) else [body]
 
         for item in items:
+            done = item.get(MessageKey.STOP, False) or False
             match item.get(MessageKey.TYPE):
-
                 case MessageType.THOUGHT:
                     content = item.get(MessageKey.CONTENT, "")
                     logger.debug("Thought: %s", content)
@@ -78,7 +78,7 @@ def handle_response(
                 case MessageType.REPLY:
                     console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
 
-                case MessageType.ASK:
+                case MessageType.QUESTION:
                     console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
                     answer = console.input("[bold cyan]> [/bold cyan]")
                     reply_messages.append({LogKey.ROLE.value: Role.USER.value, LogKey.CONTENT.value: answer})
@@ -91,6 +91,7 @@ def handle_response(
                     # inline assistant message tool call - Google API does this
                     # {"type": "call", "api": "default_api:ReadFile", "parameters": ["olaf.txt"]}
                     # reply_messages.append({"role": "assistant", "content": "", "tool_calls": [item]})
+                    # but sometimes:
                     call_res = handle_tool_calls([
                         ToolCall(name=item[MessageKey.API].removeprefix("default_api:"), args=item[MessageKey.PARAMETERS])
                     ])

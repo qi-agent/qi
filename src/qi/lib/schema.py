@@ -9,56 +9,18 @@ RESPONSE_SCHEMA: dict[str, Any] = {
             "type": "array",
             "description": "Sequence of messages to execute in order",
             "items": {
-                "oneOf": [
-                    {
-                        "description": "Internal reasoning step",
-                        "type": "object",
-                        "properties": {
-                            "type": {"type": "string", "enum": ["thought"]},
-                            "content": {
-                                "type": "string",
-                                "description": "The agent's internal reasoning",
-                            },
-                        },
-                        "required": ["type", "content"],
-                    },
-                    {
-                        "description": "Text output to the user",
-                        "type": "object",
-                        "properties": {
-                            "type": {"type": "string", "enum": ["reply"]},
-                            "content": {
-                                "type": "string",
-                                "description": "Text to output to the user",
-                            },
-                        },
-                        "required": ["type", "content"],
-                    },
-                    {
-                        "description": "Question directed at the user",
-                        "type": "object",
-                        "properties": {
-                            "type": {"type": "string", "enum": ["ask"]},
-                            "content": {
-                                "type": "string",
-                                "description": "Question to ask the user",
-                            },
-                        },
-                        "required": ["type", "content"],
-                    },
-                    {
-                        "description": "Final summary concluding the task",
-                        "type": "object",
-                        "properties": {
-                            "type": {"type": "string", "enum": ["conclusion"]},
-                            "content": {
-                                "type": "string",
-                                "description": "Final summary or result",
-                            },
-                        },
-                        "required": ["type", "content"],
-                    },
-                ],
+                "description": "Reply or question to the user",
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["reply", "question"]},
+                    "content": {"type": "string"},
+                    "done": {
+                        "type": "boolean",
+                        "description": "Set to true if the task is concluded, or unable to proceed"
+                    }
+                },
+                "required": ["type", "content", "done"],
+                "additionalProperties": False,
             },
         },
     },
