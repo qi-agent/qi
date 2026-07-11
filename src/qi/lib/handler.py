@@ -68,7 +68,7 @@ def handle_response(
             items = body if isinstance(body, list) else [body]
 
         for item in items:
-            done = item.get(MessageKey.STOP, False) or False
+            done = item.get(MessageKey.DONE, False) or False
             match item.get(MessageKey.TYPE):
                 case MessageType.THOUGHT:
                     content = item.get(MessageKey.CONTENT, "")
@@ -123,7 +123,7 @@ def handle_response(
     else:
         # done if no error, no tool calls and no asks
         done = not error and (
-            done or not {MessageType.ASK, MessageType.CALL}.union({item[MessageKey.TYPE] for item in items})
+            done or not {MessageType.QUESTION, MessageType.CALL}.union({item[MessageKey.TYPE] for item in items})
         )
 
     return reply_messages, done
