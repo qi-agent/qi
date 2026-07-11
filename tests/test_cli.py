@@ -8,11 +8,31 @@ from qi import __version__
 from qi.cli import HELP, main
 
 
-def test_no_args_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
+class _FakeStdin:
+    def __init__(self, tty: bool) -> None:
+        self._tty = tty
+
+    def isatty(self) -> bool:
+        return self._tty
+
+
+def test_no_args_interactive_prints_help(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("sys.stdin", _FakeStdin(tty=True))
     rc = main([])
     out, _ = capsys.readouterr()
     assert rc == 0
     assert out == HELP + "\n"
+
+
+def test_no_args_piped_routes_to_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_run = Mock(return_value=0)
+    monkeypatch.setattr("qi.commands.run.run", mock_run)
+    monkeypatch.setattr("sys.stdin", _FakeStdin(tty=False))
+    rc = main([])
+    assert rc == 0
+    mock_run.assert_called_once_with([])
 
 
 def test_help_flag_prints_help(capsys: pytest.CaptureFixture[str]) -> None:

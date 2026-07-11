@@ -51,6 +51,10 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, str, 
         return parsed, "run", args
 
     if not args:
+        # No subcommand and no args: if stdin is piped, default to run (piped mode);
+        # otherwise show help.
+        if not sys.stdin.isatty():
+            return parsed, "run", remaining
         return parsed, "", remaining
     return parsed, "run", args
 
