@@ -39,7 +39,7 @@ class LogMetaKey(StrEnum):
 class MessageKey(StrEnum):
     """Keys in the response message we require from LLM"""
     API = "api"  # Google returns this: '{"type": "call", "api": "default_api:Bash", "parameters": ["git branch --show-current"]}'
-    STOP = "stop"
+    DONE = "done"
     TYPE = "type"
     CONTENT = "content"
     PARAMETERS = "parameters"
