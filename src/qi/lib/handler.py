@@ -31,8 +31,10 @@ def _truncate(obj: object, max_len: int = 5000) -> str:
     return s
 
 
-def _strip_code_fence(content: str) -> str:
-    content = re.sub(r'\A```\w*\n?', '', content)
+def _strip_code_fence(raw_content: str) -> str:
+    content = re.sub(r'\A\s*```\w*\n?', '', raw_content)
+    if content == raw_content:
+        return raw_content  # no code fence found, return original
     content = re.sub(r'\n?```\s*\Z', '', content)
     return content.strip()
 
@@ -66,52 +68,45 @@ def handle_response(
             items = body.get("messages", [body])
         else:
             items = body if isinstance(body, list) else [body]
-
-        for item in items:
-            done = item.get(MessageKey.DONE, False) or False
-            match item.get(MessageKey.TYPE):
-                case MessageType.THOUGHT:
-                    content = item.get(MessageKey.CONTENT, "")
-                    logger.debug("Thought: %s", content)
-                    console.print(content, style="dim")
-
-                case MessageType.REPLY:
-                    console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
-
-                case MessageType.QUESTION:
-                    console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
-                    answer = console.input("[bold cyan]> [/bold cyan]")
-                    reply_messages.append({LogKey.ROLE.value: Role.USER.value, LogKey.CONTENT.value: answer})
-
-                case MessageType.CONCLUSION:
-                    console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
-                    done = True
-
-                case MessageType.CALL:
-                    # inline assistant message tool call - Google API does this
-                    # {"type": "call", "api": "default_api:ReadFile", "parameters": ["olaf.txt"]}
-                    # reply_messages.append({"role": "assistant", "content": "", "tool_calls": [item]})
-                    # but sometimes:
-                    call_res = handle_tool_calls([
-                        ToolCall(name=item[MessageKey.API].removeprefix("default_api:"), args=item[MessageKey.PARAMETERS])
-                    ])
-                    reply_messages.append(call_res[0])
-                case _:
-                    done = True
-                    logger.warning("Unknown type: %s", item.get(MessageKey.TYPE, "unknown"))
-
     except json.JSONDecodeError as e:
         logger.warning("Unable to parse LLM response as JSON. Correcting it")
         logger.info(f"[ERR] LLM response is not valid JSON: {e}\n  Full response:\n{content}", exc_info=True)
         error = True
-        # remind the model to give us structured output
-        reply_messages.append({
-            LogKey.ROLE.value: Role.USER.value,  # should be system, but we avoid interspersing system prompt for Google (probably Anthopic too)
-            LogKey.CONTENT.value: (
-                "Could not parse the content of the `messages` key as JSON (after removing any leading / trailing code fences) "
-                "in your last response. Stick to the stipulated format and do not make up your own"
-            )
-        })
+        # Treat the unparseable text as a final reply rather than nudging the model to retry.
+        items = [{MessageKey.TYPE: MessageType.REPLY.value, MessageKey.CONTENT: content, MessageKey.DONE: True}]
+    for item in items:
+        done = item.get(MessageKey.DONE, False) or False
+        match item.get(MessageKey.TYPE):
+            case MessageType.THOUGHT:
+                content = item.get(MessageKey.CONTENT, "")
+                logger.debug("Thought: %s", content)
+                console.print(content, style="dim")
+
+            case MessageType.REPLY:
+                console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
+
+            case MessageType.QUESTION:
+                console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
+                answer = console.input("[bold cyan]> [/bold cyan]")
+                reply_messages.append({LogKey.ROLE.value: Role.USER.value, LogKey.CONTENT.value: answer})
+
+            case MessageType.CONCLUSION:
+                console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
+                done = True
+
+            case MessageType.CALL:
+                # inline assistant message tool call - Google API does this
+                # {"type": "call", "api": "default_api:ReadFile", "parameters": ["olaf.txt"]}
+                # reply_messages.append({"role": "assistant", "content": "", "tool_calls": [item]})
+                # but sometimes:
+                call_res = handle_tool_calls([
+                    ToolCall(name=item[MessageKey.API].removeprefix("default_api:"), args=item[MessageKey.PARAMETERS])
+                ])
+                reply_messages.append(call_res[0])
+            case _:
+                done = True
+                logger.warning("Unknown type: %s", item.get(MessageKey.TYPE, "unknown"))
+
 
     # top-level tool calls
     if tool_calls:
@@ -122,9 +117,7 @@ def handle_response(
             reply_messages.extend(tool_msgs)
     else:
         # done if no error, no tool calls and no asks
-        done = not error and (
-            done or not {MessageType.QUESTION, MessageType.CALL}.union({item[MessageKey.TYPE] for item in items})
-        )
+        done = done or error or not {MessageType.QUESTION, MessageType.CALL}.union({item[MessageKey.TYPE] for item in items})
 
     return reply_messages, done
 
