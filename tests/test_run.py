@@ -1123,3 +1123,85 @@ def test_piped_mode_files_only_empty_stdin_is_noop(monkeypatch: pytest.MonkeyPat
 
     assert rc == 0
     mock_client.chat.assert_not_called()
+
+
+def _write_skill(tmp_path, name: str = "greet") -> None:
+    skill_dir = tmp_path / ".qi" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Say hello\n---\nAlways greet warmly.\n"
+    )
+
+
+def test_skill_flag_injects_skill_message(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--skill force-loads the skill body as a user message."""
+    monkeypatch.chdir(tmp_path)
+    _write_skill(tmp_path)
+
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(content="{}")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = Settings(api_key="sk-test")
+
+        rc = run(["--skill", "greet", "-p", "do the thing"])
+
+    assert rc == 0
+    messages = mock_client.chat.call_args[0][0]
+    skill_msgs = [m for m in messages if m["role"] == "user" and '<SKILL name="greet"' in str(m["content"])]
+    assert len(skill_msgs) == 1
+    assert "Always greet warmly." in skill_msgs[0]["content"]
+
+
+def test_unknown_skill_flag_returns_error(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--skill with an unknown name fails before any LLM call."""
+    monkeypatch.chdir(tmp_path)
+    _write_skill(tmp_path)
+
+    mock_client = Mock()
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = Settings(api_key="sk-test")
+
+        rc = run(["--skill", "nope", "-p", "do the thing"])
+
+    assert rc == 1
+    mock_client.chat.assert_not_called()
+
+
+def test_skill_flag_in_piped_mode(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--skill injects the skill message into the piped-mode base session."""
+    monkeypatch.chdir(tmp_path)
+    _write_skill(tmp_path)
+
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+    stdin = _PipedStdin(json.dumps({"role": "user", "content": "from-pipe"}) + "\n")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["--skill", "greet"])
+
+    assert rc == 0
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[0]["role"] == "system"
+    assert '<SKILL name="greet"' in messages[1]["content"]
+    assert messages[-1]["content"] == "from-pipe"

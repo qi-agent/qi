@@ -54,6 +54,37 @@ def test_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert "<PROJECT_INSTRUCTIONS>" in result
 
 
+def _write_skill(tmp_path: Path, name: str = "greet", description: str = "Say hello nicely") -> None:
+    skill_dir = tmp_path / ".qi" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {description}\n---\nbody\n")
+
+
+def test_no_skills_block_when_no_skills(tmp_path: Path) -> None:
+    result = get_system_prompt(cwd=tmp_path)
+    assert "<AVAILABLE_SKILLS>" not in result
+
+
+def test_lists_skills(tmp_path: Path) -> None:
+    _write_skill(tmp_path)
+    result = get_system_prompt(cwd=tmp_path)
+
+    assert result.startswith(SYSTEM_PROMPT)
+    assert "<AVAILABLE_SKILLS>" in result
+    assert "- greet: Say hello nicely" in result
+    assert "</AVAILABLE_SKILLS>" in result
+
+
+def test_skills_coexist_with_project_instructions(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("Use tabs.")
+    _write_skill(tmp_path)
+    result = get_system_prompt(cwd=tmp_path)
+
+    assert "<PROJECT_INSTRUCTIONS>" in result
+    assert "<AVAILABLE_SKILLS>" in result
+    assert result.index("<PROJECT_INSTRUCTIONS>") < result.index("<AVAILABLE_SKILLS>")
+
+
 def test_appended_via_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.chdir(tmp_path)
