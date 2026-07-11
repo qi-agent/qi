@@ -1,10 +1,12 @@
 """Tests for the master prompt."""
 
 from pathlib import Path
+from unittest.mock import Mock, mock_open, patch
 
 import pytest
 
 from qi.lib.context import get_system_prompt
+from qi.lib.llm_client._types import LLMResponse
 from qi.prompts.master import SYSTEM_PROMPT
 
 
@@ -53,9 +55,6 @@ def test_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_appended_via_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from unittest.mock import Mock, mock_open, patch
-
-    from qi.lib.llm_client._types import LLMResponse
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "AGENTS.md").write_text("Always write tests first.")
@@ -66,6 +65,7 @@ def test_appended_via_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
         patch("builtins.open", mock_open(read_data="x")),
     ):
         from qi.commands.run import run

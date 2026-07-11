@@ -1,5 +1,7 @@
 """Tests for the run command."""
 
+import io
+import json
 import re
 from unittest.mock import Mock, mock_open, patch
 
@@ -23,6 +25,7 @@ def test_files_sent_as_user_messages() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
         patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="file content")),
     ):
@@ -61,6 +64,7 @@ def test_files_sent_as_user_messages_capsys(capsys: pytest.CaptureFixture[str]) 
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
         patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="x")),
     ):
@@ -89,6 +93,7 @@ def test_prompt_adds_instruction_message() -> None:
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
         patch("qi.lib.session.Session._write"),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
         patch("builtins.open", mock_open(read_data="code")),
     ):
         mock_load.return_value = Settings(
@@ -126,6 +131,7 @@ def test_multiple_files() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
         patch("qi.lib.session.Session._write"),
         patch("builtins.open", side_effect=handles),
     ):
@@ -173,6 +179,7 @@ def test_llm_error_returns_error() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
         patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="x")),
     ):
@@ -212,6 +219,7 @@ def test_tool_calls_are_executed() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
         patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="file content")),
     ):
@@ -237,6 +245,7 @@ def test_passes_tools_and_response_format() -> None:
     with (
         patch("qi.commands.run.load") as mock_load,
         patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
         patch("qi.lib.session.Session._write"),
         patch("builtins.open", mock_open(read_data="x")),
     ):
@@ -255,3 +264,243 @@ def test_passes_tools_and_response_format() -> None:
     assert "tools" in kwargs
     assert "response_format" in kwargs
     assert kwargs["response_format"]["type"] == "json_schema"
+
+
+class _PipedStdin(io.StringIO):
+    def isatty(self) -> bool:
+        return False
+
+
+def test_piped_mode_does_not_require_prompt_or_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+    stdin = _PipedStdin(json.dumps({"role": "user", "content": "from-pipe"}) + "\n")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = Settings(
+            api_key="sk-test",
+            model="gpt-4o",
+            base_url="https://api.openai.com/v1",
+            max_tokens=4096,
+            temperature=0.0,
+        )
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run([])
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+
+
+def test_piped_mode_does_not_inject_default_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+    stdin = _PipedStdin(json.dumps({"role": "user", "content": "literal-user-message"}) + "\n")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = Settings(
+            api_key="sk-test",
+            model="gpt-4o",
+            base_url="https://api.openai.com/v1",
+            max_tokens=4096,
+            temperature=0.0,
+        )
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run([])
+
+    assert rc == 0
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[0]["role"] == "system"
+    assert messages[1] == {"role": "user", "content": "literal-user-message"}
+
+
+def test_piped_mode_processes_each_user_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_client = Mock()
+    mock_client.chat.side_effect = [
+        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "one"}]}'),
+        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "two"}]}'),
+    ]
+    stdin = _PipedStdin(
+        "\n".join(
+            [
+                json.dumps({"role": "user", "content": "first"}),
+                json.dumps({"role": "assistant", "content": "ignore"}),
+                json.dumps({"role": "user", "content": "second"}),
+            ]
+        )
+        + "\n"
+    )
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = Settings(
+            api_key="sk-test",
+            model="gpt-4o",
+            base_url="https://api.openai.com/v1",
+            max_tokens=4096,
+            temperature=0.0,
+        )
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run([])
+
+    assert rc == 0
+    assert mock_client.chat.call_count == 2
+    first_messages = mock_client.chat.call_args_list[0][0][0]
+    second_messages = mock_client.chat.call_args_list[1][0][0]
+    assert first_messages[1]["content"] == "first"
+    # Continuous session: the second call carries the first turn's history, so the
+    # first user message is still "first", the assistant's first reply follows, and
+    # "second" is the latest (last) message.
+    assert second_messages[1]["content"] == "first"
+    assert second_messages[2]["role"] == "assistant"
+    assert second_messages[-1]["content"] == "second"
+
+
+def _piped_settings() -> Settings:
+    return Settings(
+        api_key="sk-test",
+        model="gpt-4o",
+        base_url="https://api.openai.com/v1",
+        max_tokens=4096,
+        temperature=0.0,
+    )
+
+
+def test_piped_mode_prompt_and_stdin_combined(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--prompt is logged as a user turn; the first stdin line drives the first call,
+    so that call sees prompt + line as consecutive user messages with no assistant
+    turn in between."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+    stdin = _PipedStdin(json.dumps({"role": "user", "content": "stdin-line"}) + "\n")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["-p", "prompt-instruction"])
+
+    assert rc == 0
+    # The prompt alone did not trigger a round-trip; the single stdin line drove the
+    # single call.
+    mock_client.chat.assert_called_once()
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[0]["role"] == "system"
+    assert messages[1] == {"role": "user", "content": "prompt-instruction"}
+    assert messages[2] == {"role": "user", "content": "stdin-line"}
+    assert all(m["role"] != "assistant" for m in messages)
+
+
+def test_piped_mode_prompt_only_empty_stdin_runs_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A prompt-only invocation with an empty/closed pipe still runs one loop."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+    stdin = _PipedStdin("")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["-p", "just-a-prompt"])
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[-1] == {"role": "user", "content": "just-a-prompt"}
+
+
+def test_piped_mode_invalid_json_fails_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed JSON line aborts with a non-zero code and does not skip ahead."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+    stdin = _PipedStdin(
+        "this is not json\n" + json.dumps({"role": "user", "content": "after"}) + "\n"
+    )
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run([])
+
+    assert rc != 0
+    mock_client.chat.assert_not_called()
+
+
+def test_piped_mode_non_dict_line_fails_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Valid JSON that isn't an object aborts cleanly instead of raising AttributeError."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+    stdin = _PipedStdin(
+        "[1, 2]\n" + json.dumps({"role": "user", "content": "after"}) + "\n"
+    )
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run([])
+
+    assert rc != 0
+    mock_client.chat.assert_not_called()
+
+
+def test_piped_mode_files_only_empty_stdin_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Files-only with an empty pipe and no prompt is an intentional no-op."""
+    mock_client = Mock()
+    stdin = _PipedStdin("")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+        patch("builtins.open", mock_open(read_data="file content")),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["somefile.py"])
+
+    assert rc == 0
+    mock_client.chat.assert_not_called()
