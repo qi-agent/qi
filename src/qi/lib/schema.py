@@ -27,4 +27,17 @@ RESPONSE_SCHEMA: dict[str, Any] = {
     "required": ["messages"],
 }
 
-__all__ = ["RESPONSE_SCHEMA"]
+RESPONSE_FORMAT: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "qi_response",
+        "strict": True,
+        "schema": RESPONSE_SCHEMA,
+    },
+}
+
+
+__all__ = [
+    "RESPONSE_FORMAT",
+    "RESPONSE_SCHEMA",
+]
