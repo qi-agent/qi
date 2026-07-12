@@ -14,6 +14,7 @@ from qi.lib.constants import LogKey, LogRecord, Role
 from qi.lib.context import get_system_prompt
 from qi.lib.handler import handle_response, route_console_output
 from qi.lib.llm_client import LLMClient
+from qi.lib.logging import route_log_output
 from qi.lib.schema import RESPONSE_FORMAT
 from qi.lib.session import Session
 from qi.tools import TOOL_SCHEMAS
@@ -319,7 +320,9 @@ def run(argv: list[str]) -> int:
     piped_mode = _is_piped_mode()
     # jsonl reserves stdout for the event stream; humans read stderr. Set explicitly
     # either way so one invocation can't inherit the routing of a previous one.
-    route_console_output(to_stderr=piped_mode and parsed.output_format == OUTPUT_FORMAT_JSONL)
+    to_stderr = piped_mode and parsed.output_format == OUTPUT_FORMAT_JSONL
+    route_console_output(to_stderr=to_stderr)
+    route_log_output(to_stderr=to_stderr)
 
     if not parsed.files and not parsed.prompt and not piped_mode:
         logger.error("No input files or prompt provided.")
