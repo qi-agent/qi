@@ -1,6 +1,5 @@
 """Tests for native tools (Bash, ReadFile)."""
 
-import json
 from pathlib import Path
 
 from qi.tools.bash import BashTool
