@@ -3,6 +3,7 @@
 import io
 import json
 import re
+from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -777,6 +778,132 @@ def test_interactive_question_still_prompts_on_console(
     second_messages = mock_client.chat.call_args_list[1][0][0]
     assert second_messages[-1]["role"] == "user"
     assert second_messages[-1]["content"] == "typed-answer"
+
+
+def _write_session_fixture(session_dir: Path, session_id: str) -> Path:
+    session_dir.mkdir(parents=True, exist_ok=True)
+    file_path = session_dir / f"{session_id}.jsonl"
+    records = [
+        {"type": "session_start", "timestamp": "2026-07-12T00:00:00", "role": "", "meta": {"model": "gpt-4o"}},
+        {"type": "message", "timestamp": "2026-07-12T00:00:01", "role": "system", "content": "sys-prompt"},
+        {"type": "message", "timestamp": "2026-07-12T00:00:02", "role": "user", "content": "earlier question"},
+        {"type": "message", "timestamp": "2026-07-12T00:00:03", "role": "assistant", "content": "earlier answer"},
+    ]
+    file_path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    return file_path
+
+
+def test_resume_continues_existing_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--resume rebuilds history from the session file, appends the new turn to the
+    same file, and emits the new events on the jsonl stream."""
+    monkeypatch.chdir(tmp_path)
+    session_id = "20260712T000000-deadbeef-earlier_question"
+    file_path = _write_session_fixture(tmp_path / ".qi" / "sessions", session_id)
+
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "resumed done"}]}'
+    )
+    stdin = _PipedStdin(json.dumps({"role": "user", "content": "follow-up"}) + "\n")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["--resume", session_id, "--output-format", "jsonl"])
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[0] == {"role": "system", "content": "sys-prompt"}
+    assert {"role": "user", "content": "earlier question"} in messages
+    assert {"role": "assistant", "content": "earlier answer"} in messages
+    assert messages[-1] == {"role": "user", "content": "follow-up"}
+
+    # The same session file gained the new records.
+    lines = [json.loads(line) for line in file_path.read_text().splitlines()]
+    assert any(r.get("content") == "follow-up" for r in lines)
+    assert any(r.get("role") == "assistant" and "resumed done" in str(r.get("content")) for r in lines)
+
+    # Only the NEW records are streamed; replayed history is not re-emitted.
+    out, _ = capsys.readouterr()
+    events = [json.loads(line) for line in out.splitlines() if line.strip()]
+    assert any(e.get("content") == "follow-up" for e in events)
+    assert not any(e.get("content") == "earlier question" for e in events)
+
+
+def test_resume_unknown_session_id_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mock_client = Mock()
+    stdin = _PipedStdin(json.dumps({"role": "user", "content": "hi"}) + "\n")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["--resume", "no-such-session"])
+
+    assert rc != 0
+    mock_client.chat.assert_not_called()
+
+
+def test_resume_rejects_input_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Files would be re-injected into an already-established history; reject the
+    combination instead of guessing."""
+    monkeypatch.chdir(tmp_path)
+    session_id = "20260712T000000-deadbeef-earlier_question"
+    _write_session_fixture(tmp_path / ".qi" / "sessions", session_id)
+
+    mock_client = Mock()
+    stdin = _PipedStdin("")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["--resume", session_id, "some_file.py"])
+
+    assert rc != 0
+    mock_client.chat.assert_not_called()
+
+
+def test_resume_requires_piped_stdin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    session_id = "20260712T000000-deadbeef-earlier_question"
+    _write_session_fixture(tmp_path / ".qi" / "sessions", session_id)
+
+    mock_client = Mock()
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
+    ):
+        mock_load.return_value = _piped_settings()
+
+        rc = run(["--resume", session_id])
+
+    assert rc != 0
+    mock_client.chat.assert_not_called()
 
 
 def test_piped_mode_files_only_empty_stdin_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:

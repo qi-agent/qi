@@ -255,6 +255,15 @@ def _run_piped(
     )
     logger.info(f"Session file: {session.file_path}")
 
+    return _pipe_commands_into_session(session, client, settings, prompt)
+
+
+def _pipe_commands_into_session(
+    session: Session,
+    client: Any,
+    settings: Settings,
+    prompt: str,
+) -> int:
     if prompt:
         session.log_message(Role.USER.value, prompt)
 
@@ -278,6 +287,24 @@ def _run_piped(
     return 0
 
 
+def _resume_session(session_dir: Path, session_id: str, output_format: str) -> Session | None:
+    """Rebuild a Session from .qi/sessions/<id>.jsonl, or None if it can't be loaded."""
+    file_path = session_dir / f"{session_id}.jsonl"
+    if not file_path.exists():
+        logger.error(f"No session '{session_id}' found in {session_dir}")
+        return None
+
+    try:
+        session = Session.from_session_file(file_path)
+    except Exception as e:
+        logger.error(f"Cannot resume session '{session_id}': {e}")
+        return None
+
+    if output_format == OUTPUT_FORMAT_JSONL:
+        session.on_record = _emit_record
+    return session
+
+
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="qi",
@@ -299,6 +326,11 @@ def run(argv: list[str]) -> int:
         default=OUTPUT_FORMAT_TEXT,
         help="Output format: human-readable text or one JSON event per line",
     )
+    parser.add_argument(
+        "--resume",
+        metavar="session_id",
+        help="Continue an existing session from .qi/sessions/<session_id>.jsonl (piped mode)",
+    )
     parsed = parser.parse_args(argv)
 
     settings = load()
@@ -308,6 +340,28 @@ def run(argv: list[str]) -> int:
     to_stderr = parsed.output_format == OUTPUT_FORMAT_JSONL
     route_console_output(to_stderr=to_stderr)
     route_log_output(to_stderr=to_stderr)
+
+    if parsed.resume:
+        # The resumed history already carries its system prompt and file context;
+        # re-injecting files would duplicate context, so reject the combination.
+        if parsed.files:
+            logger.error("--resume cannot be combined with input files.")
+            return 1
+        if not piped_mode:
+            logger.error("--resume requires piped stdin (JSON commands on stdin).")
+            return 1
+
+        session = _resume_session(_get_session_dir(), parsed.resume, parsed.output_format)
+        if session is None:
+            return 1
+        logger.info(f"Resumed session file: {session.file_path}")
+
+        client = LLMClient.create(
+            base_url=settings.base_url,
+            model=settings.model,
+            api_key=settings.api_key,
+        )
+        return _pipe_commands_into_session(session, client, settings, parsed.prompt or "")
 
     if not parsed.files and not parsed.prompt and not piped_mode:
         logger.error("No input files or prompt provided.")
