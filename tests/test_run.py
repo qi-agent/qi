@@ -613,6 +613,37 @@ def test_jsonl_mode_emits_tool_call_and_result_events(
     assert tool_results[0]["tool_call_id"] == "call_1"
 
 
+def test_one_shot_mode_supports_jsonl_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--output-format jsonl also works in one-shot (non-piped) mode: stdout is a
+    pure JSONL event stream, human rendering goes to stderr."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "one-shot done"}]}'
+    )
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
+        patch("qi.lib.session.Session._write"),
+        patch("builtins.open", mock_open(read_data="file content")),
+    ):
+        mock_load.return_value = _piped_settings()
+
+        rc = run(["-p", "analyze", "f.py", "--output-format", "jsonl"])
+
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    lines = [line for line in out.splitlines() if line.strip()]
+    assert lines, "expected JSONL events on stdout"
+    events = [json.loads(line) for line in lines]
+    assert all(isinstance(e, dict) for e in events)
+    assert events[0]["type"] == "session_start"
+    assert any(e.get("role") == "assistant" for e in events)
+
+
 def test_text_mode_emits_no_jsonl_events(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

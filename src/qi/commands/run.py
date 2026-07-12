@@ -90,11 +90,20 @@ def _create_session_from_messages(
     return session
 
 
-def _create_session(session_dir: Path, model: str, user_prompt: str, file_paths: list[str], file_messages: list[str]) -> Session:
+def _create_session(
+    session_dir: Path,
+    model: str,
+    user_prompt: str,
+    file_paths: list[str],
+    file_messages: list[str],
+    output_format: str = OUTPUT_FORMAT_TEXT,
+) -> Session:
     prompt, slug_hint = _create_initial_prompt(user_prompt, file_paths)
 
     Session.ensure(session_dir)
     session = Session.from_prompt(slug_hint, model, session_dir)
+    if output_format == OUTPUT_FORMAT_JSONL:
+        session.on_record = _emit_record
     session.log_start(model)
     session.log_message(Role.SYSTEM.value, get_system_prompt())
     session.log_message(Role.USER.value, prompt)
@@ -296,7 +305,7 @@ def run(argv: list[str]) -> int:
     piped_mode = _is_piped_mode()
     # jsonl reserves stdout for the event stream; humans read stderr. Set explicitly
     # either way so one invocation can't inherit the routing of a previous one.
-    to_stderr = piped_mode and parsed.output_format == OUTPUT_FORMAT_JSONL
+    to_stderr = parsed.output_format == OUTPUT_FORMAT_JSONL
     route_console_output(to_stderr=to_stderr)
     route_log_output(to_stderr=to_stderr)
 
@@ -322,6 +331,9 @@ def run(argv: list[str]) -> int:
             output_format=parsed.output_format,
         )
 
-    session = _create_session(_get_session_dir(), settings.model, parsed.prompt, parsed.files, file_messages)
+    session = _create_session(
+        _get_session_dir(), settings.model, parsed.prompt, parsed.files, file_messages,
+        output_format=parsed.output_format,
+    )
     logger.info(f"Session file: {session.file_path}")
     return _run_loop(session, client, settings)
