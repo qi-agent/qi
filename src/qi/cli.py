@@ -1,6 +1,7 @@
 """CLI entry point for Qi."""
 
 import argparse
+import contextlib
 import importlib
 import logging
 import os
@@ -100,13 +101,23 @@ def main(argv: list[str] | None = None) -> int:
 
     setup_logging()
 
-    if subcommand in SUBCOMMANDS:
-        mod = importlib.import_module(SUBCOMMANDS[subcommand])
-        return mod.run(remaining)  # type: ignore[no-any-return]
+    try:
+        if subcommand in SUBCOMMANDS:
+            mod = importlib.import_module(SUBCOMMANDS[subcommand])
+            return mod.run(remaining)  # type: ignore[no-any-return]
 
-    from qi.commands.run import run as run_cmd
+        from qi.commands.run import run as run_cmd
 
-    return run_cmd(remaining)
+        return run_cmd(remaining)
+    except BrokenPipeError:
+        # The reader went away (e.g. `qi ... | head`). Standard Unix tools die
+        # quietly on SIGPIPE; mirror that with the conventional 128+SIGPIPE code.
+        # Point stdout at devnull so the interpreter's exit-time flush of the
+        # broken stream can't print "Exception ignored" noise.
+        with contextlib.suppress(OSError, ValueError):
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        return 141
 
 
 if __name__ == "__main__":

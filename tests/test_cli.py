@@ -116,6 +116,19 @@ def test_run_implicit_passes_unknown_option(
     mock_run.assert_called_once_with(["--bogus", "foo.py"])
 
 
+def test_broken_pipe_exits_quietly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When the reader closes stdout (e.g. `qi ... | head`), die like a standard
+    Unix tool: no traceback, conventional 128+SIGPIPE exit code."""
+    mock_run = Mock(side_effect=BrokenPipeError)
+    monkeypatch.setattr("qi.commands.run.run", mock_run)
+    rc = main(["foo.py"])
+    assert rc == 141
+    _, err = capsys.readouterr()
+    assert "Traceback" not in err
+
+
 def test_return_value_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_run = Mock(return_value=42)
     monkeypatch.setattr("qi.commands.run.run", mock_run)
