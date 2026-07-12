@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from qi.lib.config import Settings, load
-from qi.lib.constants import LogKey, Role
+from qi.lib.constants import LogKey, LogRecord, Role
 from qi.lib.context import get_system_prompt
-from qi.lib.handler import handle_response
+from qi.lib.handler import handle_response, route_console_output
 from qi.lib.llm_client import LLMClient
 from qi.lib.schema import RESPONSE_FORMAT
 from qi.lib.session import Session
@@ -68,14 +68,21 @@ def _create_initial_prompt(prompt_message: str, file_paths: list[str]) -> tuple[
     return prompt_instruction, slug_hint
 
 
+def _emit_record(record: LogRecord) -> None:
+    print(json.dumps(record), flush=True)
+
+
 def _create_session_from_messages(
     session_dir: Path,
     model: str,
     messages: list[dict[str, Any]],
     slug_hint: str,
+    output_format: str = OUTPUT_FORMAT_TEXT,
 ) -> Session:
     Session.ensure(session_dir)
     session = Session.from_prompt(slug_hint, model, session_dir)
+    if output_format == OUTPUT_FORMAT_JSONL:
+        session.on_record = _emit_record
     session.log_start(model)
     for message in messages:
         session.log_message(message[LogKey.ROLE], message[LogKey.CONTENT])
@@ -230,7 +237,9 @@ def _run_piped(
     else:
         slug_hint = ""
 
-    session = _create_session_from_messages(_get_session_dir(), settings.model, messages, slug_hint)
+    session = _create_session_from_messages(
+        _get_session_dir(), settings.model, messages, slug_hint, output_format=output_format,
+    )
     logger.info(f"Session file: {session.file_path}")
 
     if prompt:
@@ -281,6 +290,9 @@ def run(argv: list[str]) -> int:
 
     settings = load()
     piped_mode = _is_piped_mode()
+    # jsonl reserves stdout for the event stream; humans read stderr. Set explicitly
+    # either way so one invocation can't inherit the routing of a previous one.
+    route_console_output(to_stderr=piped_mode and parsed.output_format == OUTPUT_FORMAT_JSONL)
 
     if not parsed.files and not parsed.prompt and not piped_mode:
         logger.error("No input files or prompt provided.")

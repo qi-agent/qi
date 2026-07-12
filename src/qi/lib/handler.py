@@ -20,6 +20,12 @@ from qi.tools import TOOL_MAP
 logger = logging.getLogger(__name__)
 console = Console()
 
+
+def route_console_output(to_stderr: bool) -> None:
+    """Route human-readable output to stderr so stdout can carry a machine protocol."""
+    global console
+    console = Console(stderr=to_stderr)
+
 ToolMap = dict[str, Any]
 FnTool = Any
 JSONPayload: TypeAlias = dict[str, Any] | list[dict[str, Any]]
