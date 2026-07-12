@@ -19,6 +19,8 @@ from qi.tools import TOOL_SCHEMAS
 
 CHARS_PER_TOKEN = 4
 FILE_READ_HEAD_CHARS = 1024
+OUTPUT_FORMAT_TEXT = "text"
+OUTPUT_FORMAT_JSONL = "jsonl"
 
 
 logger = logging.getLogger(__name__)
@@ -156,6 +158,7 @@ def _run_loop(
     client: Any,
     settings: Any,
     max_iterations: int = 100,
+    output_format: str = OUTPUT_FORMAT_TEXT,
 ) -> int:
     iteration = 0
     while iteration < max_iterations:
@@ -205,6 +208,7 @@ def _run_piped(
     prompt: str,
     file_paths: list[str],
     file_messages: list[str],
+    output_format: str = OUTPUT_FORMAT_TEXT,
 ) -> int:
     """Piped stdin mode: one continuing session, one agent-loop iteration per line.
 
@@ -237,7 +241,7 @@ def _run_piped(
         for user_content in _iter_stdin_user_messages(sys.stdin):
             session.log_message(Role.USER.value, user_content)
             ran_any = True
-            rc = _run_loop(session, client, settings)
+            rc = _run_loop(session, client, settings, output_format=output_format)
             if rc != 0:
                 return rc
     except ValueError as e:
@@ -247,7 +251,7 @@ def _run_piped(
     # A prompt-only invocation with an empty/closed pipe still does the work.
     # Files-only with empty stdin and no prompt is an intentional no-op.
     if not ran_any and prompt:
-        return _run_loop(session, client, settings)
+        return _run_loop(session, client, settings, output_format=output_format)
 
     return 0
 
@@ -266,6 +270,12 @@ def run(argv: list[str]) -> int:
         nargs="*",
         metavar="file",
         help="Files to process",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=[OUTPUT_FORMAT_TEXT, OUTPUT_FORMAT_JSONL],
+        default=OUTPUT_FORMAT_TEXT,
+        help="Output format: human-readable text or one JSON event per line",
     )
     parsed = parser.parse_args(argv)
 
@@ -289,7 +299,10 @@ def run(argv: list[str]) -> int:
     )
 
     if piped_mode:
-        return _run_piped(client, settings, parsed.prompt or "", parsed.files, file_messages)
+        return _run_piped(
+            client, settings, parsed.prompt or "", parsed.files, file_messages,
+            output_format=parsed.output_format,
+        )
 
     session = _create_session(_get_session_dir(), settings.model, parsed.prompt, parsed.files, file_messages)
     logger.info(f"Session file: {session.file_path}")

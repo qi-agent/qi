@@ -486,6 +486,36 @@ def test_piped_mode_non_dict_line_fails_cleanly(monkeypatch: pytest.MonkeyPatch)
     mock_client.chat.assert_not_called()
 
 
+def test_output_format_accepts_jsonl_and_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--output-format accepts 'jsonl' and 'text' without changing the run outcome."""
+    for output_format in ("jsonl", "text"):
+        mock_client = Mock()
+        mock_client.chat.return_value = LLMResponse(
+            content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        )
+        stdin = _PipedStdin(json.dumps({"role": "user", "content": "hi"}) + "\n")
+
+        with (
+            patch("qi.commands.run.load") as mock_load,
+            patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+            patch("qi.lib.session.Session._write"),
+        ):
+            mock_load.return_value = _piped_settings()
+            monkeypatch.setattr("sys.stdin", stdin)
+
+            rc = run(["--output-format", output_format])
+
+        assert rc == 0
+        mock_client.chat.assert_called_once()
+
+
+def test_output_format_rejects_unknown_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unknown --output-format value is rejected by argument parsing."""
+    monkeypatch.setattr("sys.stdin", _PipedStdin(""))
+    with pytest.raises(SystemExit):
+        run(["--output-format", "xml"])
+
+
 def test_piped_mode_files_only_empty_stdin_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Files-only with an empty pipe and no prompt is an intentional no-op."""
     mock_client = Mock()
