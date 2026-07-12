@@ -5,6 +5,7 @@ import json
 import logging
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -102,11 +103,30 @@ def _create_session(session_dir: Path, model: str, user_prompt: str, file_paths:
     return session
 
 
-def _iter_stdin_user_messages(stdin: TextIO) -> Iterator[str]:
-    """Yield the content of each user-role JSON message on stdin.
+COMMAND_INTERRUPT = "interrupt"
 
-    Non-user roles are skipped (routing). Malformed input — invalid JSON, or valid
-    JSON that isn't an object — raises ValueError so the caller can abort cleanly
+
+@dataclass
+class UserMessage:
+    content: str
+
+
+@dataclass
+class Interrupt:
+    pass
+
+
+StdinCommand = UserMessage | Interrupt
+
+
+def _iter_stdin_commands(stdin: TextIO) -> Iterator[StdinCommand]:
+    """Yield a typed command for each JSON line on stdin.
+
+    A `{"role": "user", "content": ...}` line yields a UserMessage; a
+    `{"type": "interrupt"}` line yields an Interrupt. Other well-formed objects
+    (non-user roles, unknown command types) are skipped so the protocol can grow
+    without breaking older peers. Malformed input — invalid JSON, or valid JSON
+    that isn't an object — raises ValueError so the caller can abort cleanly
     rather than crashing with a traceback or silently dropping input.
     """
     for line in stdin:
@@ -122,6 +142,10 @@ def _iter_stdin_user_messages(stdin: TextIO) -> Iterator[str]:
         if not isinstance(obj, dict):
             raise ValueError(f"Stdin message is not a JSON object: {raw!r}")
 
+        if obj.get(LogKey.TYPE) == COMMAND_INTERRUPT:
+            yield Interrupt()
+            continue
+
         if obj.get(LogKey.ROLE) != Role.USER.value:
             continue
 
@@ -129,7 +153,7 @@ def _iter_stdin_user_messages(stdin: TextIO) -> Iterator[str]:
         if content is None:
             continue
 
-        yield content
+        yield UserMessage(content)
 
 
 def _files_context_messages(file_paths: list[str], file_messages: list[str]) -> list[dict[str, Any]]:
@@ -247,8 +271,11 @@ def _run_piped(
 
     ran_any = False
     try:
-        for user_content in _iter_stdin_user_messages(sys.stdin):
-            session.log_message(Role.USER.value, user_content)
+        for command in _iter_stdin_commands(sys.stdin):
+            if isinstance(command, Interrupt):
+                logger.info("Interrupt received; ending piped run.")
+                return 0
+            session.log_message(Role.USER.value, command.content)
             ran_any = True
             rc = _run_loop(session, client, settings, output_format=output_format)
             if rc != 0:

@@ -641,6 +641,66 @@ def test_text_mode_emits_no_jsonl_events(
         assert not isinstance(parsed, dict), f"unexpected JSON event in text mode: {line}"
 
 
+def test_piped_mode_interrupt_stops_processing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An interrupt command ends the piped run cleanly; later lines are not processed."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "one"}]}'
+    )
+
+    rc = _run_piped_jsonl(
+        monkeypatch,
+        mock_client,
+        [
+            json.dumps({"role": "user", "content": "first"}),
+            json.dumps({"type": "interrupt"}),
+            json.dumps({"role": "user", "content": "never-processed"}),
+        ],
+        argv=[],
+    )
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+    messages = mock_client.chat.call_args[0][0]
+    assert all(m.get("content") != "never-processed" for m in messages)
+
+
+def test_piped_mode_interrupt_only_is_clean_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An interrupt with no prior user message ends the run without any LLM call."""
+    mock_client = Mock()
+
+    rc = _run_piped_jsonl(
+        monkeypatch, mock_client, [json.dumps({"type": "interrupt"})], argv=[]
+    )
+
+    assert rc == 0
+    mock_client.chat.assert_not_called()
+
+
+def test_piped_mode_skips_unknown_command_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A valid JSON object that is neither a user message nor a known command is
+    skipped, and processing continues with the next line."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+
+    rc = _run_piped_jsonl(
+        monkeypatch,
+        mock_client,
+        [
+            json.dumps({"type": "future-command", "payload": 1}),
+            json.dumps({"role": "user", "content": "after-unknown"}),
+        ],
+        argv=[],
+    )
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[-1]["content"] == "after-unknown"
+
+
 def test_piped_mode_files_only_empty_stdin_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Files-only with an empty pipe and no prompt is an intentional no-op."""
     mock_client = Mock()
