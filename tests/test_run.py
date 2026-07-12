@@ -666,6 +666,88 @@ def test_piped_mode_skips_unknown_command_objects(monkeypatch: pytest.MonkeyPatc
     assert messages[-1]["content"] == "after-unknown"
 
 
+def test_piped_mode_question_is_answered_by_next_stdin_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In piped mode a question must never read raw stdin (that would swallow
+    protocol lines); it ends the turn and the next user message is the answer."""
+    mock_client = Mock()
+    mock_client.chat.side_effect = [
+        LLMResponse(content='{"messages": [{"type": "question", "content": "which one?"}]}'),
+        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "done"}]}'),
+    ]
+
+    with patch(
+        "rich.console.Console.input",
+        side_effect=AssertionError("console.input must not be called in piped mode"),
+    ):
+        rc = _run_piped_jsonl(
+            monkeypatch,
+            mock_client,
+            [
+                json.dumps({"role": "user", "content": "start"}),
+                json.dumps({"role": "user", "content": "my answer"}),
+            ],
+            argv=[],
+        )
+
+    assert rc == 0
+    assert mock_client.chat.call_count == 2
+    second_messages = mock_client.chat.call_args_list[1][0][0]
+    assert second_messages[-1] == {"role": "user", "content": "my answer"}
+
+
+def test_piped_mode_question_at_eof_ends_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A question when stdin is exhausted must not raise EOFError; the run ends."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "question", "content": "anyone there?"}]}'
+    )
+
+    with patch(
+        "rich.console.Console.input",
+        side_effect=AssertionError("console.input must not be called in piped mode"),
+    ):
+        rc = _run_piped_jsonl(
+            monkeypatch,
+            mock_client,
+            [json.dumps({"role": "user", "content": "start"})],
+            argv=[],
+        )
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+
+
+def test_interactive_question_still_prompts_on_console(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Outside piped mode the question flow keeps reading the answer interactively."""
+    mock_client = Mock()
+    mock_client.chat.side_effect = [
+        LLMResponse(content='{"messages": [{"type": "question", "content": "which one?"}]}'),
+        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "done"}]}'),
+    ]
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
+        patch("qi.lib.session.Session._write"),
+        patch("builtins.open", mock_open(read_data="x")),
+        patch("rich.console.Console.input", return_value="typed-answer"),
+    ):
+        mock_load.return_value = _piped_settings()
+
+        rc = run(["f.py"])
+
+    assert rc == 0
+    assert mock_client.chat.call_count == 2
+    second_messages = mock_client.chat.call_args_list[1][0][0]
+    assert second_messages[-1]["role"] == "user"
+    assert second_messages[-1]["content"] == "typed-answer"
+
+
 def test_piped_mode_files_only_empty_stdin_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Files-only with an empty pipe and no prompt is an intentional no-op."""
     mock_client = Mock()

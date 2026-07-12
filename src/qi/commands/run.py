@@ -169,7 +169,7 @@ def _run_loop(
     client: Any,
     settings: Any,
     max_iterations: int = 100,
-    output_format: str = OUTPUT_FORMAT_TEXT,
+    interactive: bool = True,
 ) -> int:
     iteration = 0
     while iteration < max_iterations:
@@ -201,7 +201,7 @@ def _run_loop(
                 extra=response.extra,
             )
 
-        outputs, done = handle_response(response.content, response.tool_calls)
+        outputs, done = handle_response(response.content, response.tool_calls, interactive=interactive)
         for res in outputs or []:
             if res[LogKey.ROLE] == Role.TOOL:
                 session.log_tool_result(res[LogKey.CONTENT], res[LogKey.NAME], res[LogKey.TOOL_CALL_ID])
@@ -254,7 +254,7 @@ def _run_piped(
         for user_content in _iter_stdin_user_messages(sys.stdin):
             session.log_message(Role.USER.value, user_content)
             ran_any = True
-            rc = _run_loop(session, client, settings, output_format=output_format)
+            rc = _run_loop(session, client, settings, interactive=False)
             if rc != 0:
                 return rc
     except ValueError as e:
@@ -264,7 +264,7 @@ def _run_piped(
     # A prompt-only invocation with an empty/closed pipe still does the work.
     # Files-only with empty stdin and no prompt is an intentional no-op.
     if not ran_any and prompt:
-        return _run_loop(session, client, settings, output_format=output_format)
+        return _run_loop(session, client, settings, interactive=False)
 
     return 0
 
