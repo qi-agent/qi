@@ -486,6 +486,299 @@ def test_piped_mode_non_dict_line_fails_cleanly(monkeypatch: pytest.MonkeyPatch)
     mock_client.chat.assert_not_called()
 
 
+def test_output_format_accepts_jsonl_and_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--output-format accepts 'jsonl' and 'text' without changing the run outcome."""
+    for output_format in ("jsonl", "text"):
+        mock_client = Mock()
+        mock_client.chat.return_value = LLMResponse(
+            content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        )
+        stdin = _PipedStdin(json.dumps({"role": "user", "content": "hi"}) + "\n")
+
+        with (
+            patch("qi.commands.run.load") as mock_load,
+            patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+            patch("qi.lib.session.Session._write"),
+        ):
+            mock_load.return_value = _piped_settings()
+            monkeypatch.setattr("sys.stdin", stdin)
+
+            rc = run(["--output-format", output_format])
+
+        assert rc == 0
+        mock_client.chat.assert_called_once()
+
+
+def test_output_format_rejects_unknown_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unknown --output-format value is rejected by argument parsing."""
+    monkeypatch.setattr("sys.stdin", _PipedStdin(""))
+    with pytest.raises(SystemExit):
+        run(["--output-format", "xml"])
+
+
+def _run_piped_jsonl(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_client: Mock,
+    stdin_lines: list[str],
+    argv: list[str] | None = None,
+) -> int:
+    stdin = _PipedStdin("\n".join(stdin_lines) + ("\n" if stdin_lines else ""))
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.lib.session.Session._write"),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+        return run(argv if argv is not None else ["--output-format", "jsonl"])
+
+
+def test_jsonl_mode_stdout_is_pure_jsonl(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With --output-format jsonl every stdout line is a JSON object; the
+    human-readable rendering must not pollute the stream."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "all done"}]}'
+    )
+
+    rc = _run_piped_jsonl(
+        monkeypatch, mock_client, [json.dumps({"role": "user", "content": "hi"})]
+    )
+
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    lines = [line for line in out.splitlines() if line.strip()]
+    assert lines, "expected JSONL events on stdout"
+    for line in lines:
+        obj = json.loads(line)
+        assert isinstance(obj, dict)
+
+
+def test_jsonl_mode_emits_session_events(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The jsonl stream mirrors the session log: session_start first, then message
+    events carrying role/content, including the user turn and the assistant reply."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "all done"}]}'
+    )
+
+    rc = _run_piped_jsonl(
+        monkeypatch, mock_client, [json.dumps({"role": "user", "content": "hi"})]
+    )
+
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    events = [json.loads(line) for line in out.splitlines() if line.strip()]
+
+    assert events[0]["type"] == "session_start"
+    messages = [e for e in events if e["type"] == "message"]
+    assert any(m["role"] == "user" and m["content"] == "hi" for m in messages)
+    assistant = [m for m in messages if m["role"] == "assistant"]
+    assert assistant, "expected an assistant message event"
+    assert "all done" in assistant[-1]["content"]
+
+
+def test_jsonl_mode_emits_tool_call_and_result_events(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mock_client = Mock()
+    mock_client.chat.side_effect = [
+        LLMResponse(
+            content='{"messages": [{"type": "thought", "content": "reading"}]}',
+            tool_calls=[
+                ToolCall(style="openai", id="call_1", name="ReadFile", args={"path": "t.py"})
+            ],
+        ),
+        LLMResponse(
+            content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        ),
+    ]
+
+    with patch("builtins.open", mock_open(read_data="file content")):
+        rc = _run_piped_jsonl(
+            monkeypatch, mock_client, [json.dumps({"role": "user", "content": "go"})]
+        )
+
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    events = [json.loads(line) for line in out.splitlines() if line.strip()]
+    with_tool_calls = [e for e in events if e.get("tool_calls")]
+    assert with_tool_calls and with_tool_calls[0]["role"] == "assistant"
+    tool_results = [e for e in events if e.get("role") == "tool"]
+    assert tool_results and tool_results[0]["name"] == "ReadFile"
+    assert tool_results[0]["tool_call_id"] == "call_1"
+
+
+def test_one_shot_mode_supports_jsonl_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--output-format jsonl also works in one-shot (non-piped) mode: stdout is a
+    pure JSONL event stream, human rendering goes to stderr."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "one-shot done"}]}'
+    )
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
+        patch("qi.lib.session.Session._write"),
+        patch("builtins.open", mock_open(read_data="file content")),
+    ):
+        mock_load.return_value = _piped_settings()
+
+        rc = run(["-p", "analyze", "f.py", "--output-format", "jsonl"])
+
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    lines = [line for line in out.splitlines() if line.strip()]
+    assert lines, "expected JSONL events on stdout"
+    events = [json.loads(line) for line in lines]
+    assert all(isinstance(e, dict) for e in events)
+    assert events[0]["type"] == "session_start"
+    assert any(e.get("role") == "assistant" for e in events)
+
+
+def test_text_mode_emits_no_jsonl_events(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Default text mode keeps human-readable output and no JSON event lines."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "plain text done"}]}'
+    )
+
+    rc = _run_piped_jsonl(
+        monkeypatch,
+        mock_client,
+        [json.dumps({"role": "user", "content": "hi"})],
+        argv=[],
+    )
+
+    assert rc == 0
+    out, _ = capsys.readouterr()
+    for line in _strip_ansi(out).splitlines():
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        assert not isinstance(parsed, dict), f"unexpected JSON event in text mode: {line}"
+
+
+def test_piped_mode_skips_unknown_command_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A valid JSON object that isn't a user message is skipped, and processing
+    continues with the next line. EOF — not any in-band command — ends the run."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+
+    rc = _run_piped_jsonl(
+        monkeypatch,
+        mock_client,
+        [
+            json.dumps({"type": "future-command", "payload": 1}),
+            json.dumps({"type": "interrupt"}),
+            json.dumps({"role": "user", "content": "after-unknown"}),
+        ],
+        argv=[],
+    )
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[-1]["content"] == "after-unknown"
+
+
+def test_piped_mode_question_is_answered_by_next_stdin_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In piped mode a question must never read raw stdin (that would swallow
+    protocol lines); it ends the turn and the next user message is the answer."""
+    mock_client = Mock()
+    mock_client.chat.side_effect = [
+        LLMResponse(content='{"messages": [{"type": "question", "content": "which one?"}]}'),
+        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "done"}]}'),
+    ]
+
+    with patch(
+        "rich.console.Console.input",
+        side_effect=AssertionError("console.input must not be called in piped mode"),
+    ):
+        rc = _run_piped_jsonl(
+            monkeypatch,
+            mock_client,
+            [
+                json.dumps({"role": "user", "content": "start"}),
+                json.dumps({"role": "user", "content": "my answer"}),
+            ],
+            argv=[],
+        )
+
+    assert rc == 0
+    assert mock_client.chat.call_count == 2
+    second_messages = mock_client.chat.call_args_list[1][0][0]
+    assert second_messages[-1] == {"role": "user", "content": "my answer"}
+
+
+def test_piped_mode_question_at_eof_ends_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A question when stdin is exhausted must not raise EOFError; the run ends."""
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "question", "content": "anyone there?"}]}'
+    )
+
+    with patch(
+        "rich.console.Console.input",
+        side_effect=AssertionError("console.input must not be called in piped mode"),
+    ):
+        rc = _run_piped_jsonl(
+            monkeypatch,
+            mock_client,
+            [json.dumps({"role": "user", "content": "start"})],
+            argv=[],
+        )
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+
+
+def test_interactive_question_still_prompts_on_console(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Outside piped mode the question flow keeps reading the answer interactively."""
+    mock_client = Mock()
+    mock_client.chat.side_effect = [
+        LLMResponse(content='{"messages": [{"type": "question", "content": "which one?"}]}'),
+        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "done"}]}'),
+    ]
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
+        patch("qi.lib.session.Session._write"),
+        patch("builtins.open", mock_open(read_data="x")),
+        patch("rich.console.Console.input", return_value="typed-answer"),
+    ):
+        mock_load.return_value = _piped_settings()
+
+        rc = run(["f.py"])
+
+    assert rc == 0
+    assert mock_client.chat.call_count == 2
+    second_messages = mock_client.chat.call_args_list[1][0][0]
+    assert second_messages[-1]["role"] == "user"
+    assert second_messages[-1]["content"] == "typed-answer"
+
+
 def test_piped_mode_files_only_empty_stdin_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Files-only with an empty pipe and no prompt is an intentional no-op."""
     mock_client = Mock()

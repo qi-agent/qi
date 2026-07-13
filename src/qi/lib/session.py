@@ -3,7 +3,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any, cast
 
@@ -45,6 +45,9 @@ class Session:
         self.file_path = session_dir / f"{self.session_id}.jsonl"
         self.turn = TURN_ASSISTANT
         self._messages: list[LogRecord] = []
+        # Called with each newly appended record (not replayed ones), so a caller
+        # can mirror the session log as a live event stream.
+        self.on_record: Callable[[LogRecord], None] | None = None
 
     @classmethod
     def ensure(cls, session_dir: Path) -> None:
@@ -164,6 +167,8 @@ class Session:
         self._messages.append(record)
         if write:
             self._write(record)
+            if self.on_record is not None:
+                self.on_record(record)
 
         self._update_state(
             type_=type_,

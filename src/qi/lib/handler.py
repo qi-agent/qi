@@ -20,6 +20,12 @@ from qi.tools import TOOL_MAP
 logger = logging.getLogger(__name__)
 console = Console()
 
+
+def route_console_output(to_stderr: bool) -> None:
+    """Route human-readable output to stderr so stdout can carry a machine protocol."""
+    global console
+    console = Console(stderr=to_stderr)
+
 ToolMap = dict[str, Any]
 FnTool = Any
 JSONPayload: TypeAlias = dict[str, Any] | list[dict[str, Any]]
@@ -56,6 +62,7 @@ def parse_json_best_effort(s: str) -> JSONPayload:
 def handle_response(
     content: str | None,  # OpenRouter would give content = None when combined with tool calling
     tool_calls: list[ToolCall],
+    interactive: bool = True,
 ) -> tuple[list[dict[str, Any]] | None, bool]:
     content = _strip_code_fence(content or "")
     reply_messages: list[dict[str, Any]] = []
@@ -87,8 +94,14 @@ def handle_response(
 
             case MessageType.QUESTION:
                 console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
-                answer = console.input("[bold cyan]> [/bold cyan]")
-                reply_messages.append({LogKey.ROLE.value: Role.USER.value, LogKey.CONTENT.value: answer})
+                if interactive:
+                    answer = console.input("[bold cyan]> [/bold cyan]")
+                    reply_messages.append({LogKey.ROLE.value: Role.USER.value, LogKey.CONTENT.value: answer})
+                else:
+                    # Piped mode: stdin carries the message protocol, so never read a
+                    # raw answer here. End the turn; the next user message on stdin
+                    # is the answer.
+                    done = True
 
             case MessageType.CONCLUSION:
                 console.print(Markdown(item[MessageKey.CONTENT]), style="bold")

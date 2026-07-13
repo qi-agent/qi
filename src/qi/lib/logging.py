@@ -16,6 +16,12 @@ DEFAULT_THEME = {
 console = Console(soft_wrap=True, theme=Theme(DEFAULT_THEME))
 
 
+def route_log_output(to_stderr: bool) -> None:
+    """Send log output to stderr so stdout can carry a machine protocol."""
+    global console
+    console = Console(soft_wrap=True, theme=Theme(DEFAULT_THEME), stderr=to_stderr)
+
+
 def output(s: str | Text, markup: bool = False) -> None:
     console.print(s, markup=markup)
 

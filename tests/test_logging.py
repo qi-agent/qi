@@ -4,7 +4,25 @@ from unittest.mock import patch
 import pytest
 from rich.text import Text
 
-from qi.lib.logging import QiLogFormatter, QiLogHandler, _StyledLogValue, console, output
+from qi.lib.logging import QiLogFormatter, QiLogHandler, _StyledLogValue, console, output, route_log_output
+
+
+class TestRouteLogOutput:
+    def test_route_to_stderr_and_back(self, capsys: pytest.CaptureFixture[str]) -> None:
+        try:
+            route_log_output(to_stderr=True)
+            output("to-err")
+            out, err = capsys.readouterr()
+            assert "to-err" in err
+            assert "to-err" not in out
+
+            route_log_output(to_stderr=False)
+            output("to-out")
+            out, err = capsys.readouterr()
+            assert "to-out" in out
+            assert "to-out" not in err
+        finally:
+            route_log_output(to_stderr=False)
 
 
 class TestOutput:

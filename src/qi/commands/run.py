@@ -9,16 +9,19 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from qi.lib.config import Settings, load
-from qi.lib.constants import LogKey, Role
+from qi.lib.constants import LogKey, LogRecord, Role
 from qi.lib.context import get_system_prompt
-from qi.lib.handler import handle_response
+from qi.lib.handler import handle_response, route_console_output
 from qi.lib.llm_client import LLMClient
+from qi.lib.logging import route_log_output
 from qi.lib.schema import RESPONSE_FORMAT
 from qi.lib.session import Session
 from qi.tools import TOOL_SCHEMAS
 
 CHARS_PER_TOKEN = 4
 FILE_READ_HEAD_CHARS = 1024
+OUTPUT_FORMAT_TEXT = "text"
+OUTPUT_FORMAT_JSONL = "jsonl"
 
 
 logger = logging.getLogger(__name__)
@@ -66,25 +69,41 @@ def _create_initial_prompt(prompt_message: str, file_paths: list[str]) -> tuple[
     return prompt_instruction, slug_hint
 
 
+def _emit_record(record: LogRecord) -> None:
+    print(json.dumps(record), flush=True)
+
+
 def _create_session_from_messages(
     session_dir: Path,
     model: str,
     messages: list[dict[str, Any]],
     slug_hint: str,
+    output_format: str = OUTPUT_FORMAT_TEXT,
 ) -> Session:
     Session.ensure(session_dir)
     session = Session.from_prompt(slug_hint, model, session_dir)
+    if output_format == OUTPUT_FORMAT_JSONL:
+        session.on_record = _emit_record
     session.log_start(model)
     for message in messages:
         session.log_message(message[LogKey.ROLE], message[LogKey.CONTENT])
     return session
 
 
-def _create_session(session_dir: Path, model: str, user_prompt: str, file_paths: list[str], file_messages: list[str]) -> Session:
+def _create_session(
+    session_dir: Path,
+    model: str,
+    user_prompt: str,
+    file_paths: list[str],
+    file_messages: list[str],
+    output_format: str = OUTPUT_FORMAT_TEXT,
+) -> Session:
     prompt, slug_hint = _create_initial_prompt(user_prompt, file_paths)
 
     Session.ensure(session_dir)
     session = Session.from_prompt(slug_hint, model, session_dir)
+    if output_format == OUTPUT_FORMAT_JSONL:
+        session.on_record = _emit_record
     session.log_start(model)
     session.log_message(Role.SYSTEM.value, get_system_prompt())
     session.log_message(Role.USER.value, prompt)
@@ -96,9 +115,12 @@ def _create_session(session_dir: Path, model: str, user_prompt: str, file_paths:
 def _iter_stdin_user_messages(stdin: TextIO) -> Iterator[str]:
     """Yield the content of each user-role JSON message on stdin.
 
-    Non-user roles are skipped (routing). Malformed input — invalid JSON, or valid
-    JSON that isn't an object — raises ValueError so the caller can abort cleanly
-    rather than crashing with a traceback or silently dropping input.
+    Other well-formed objects (non-user roles, unrecognized shapes) are skipped so
+    the protocol can grow without breaking older peers. Standard Unix semantics
+    apply for shutdown: EOF on stdin ends the run — there is no in-band stop
+    command. Malformed input — invalid JSON, or valid JSON that isn't an object —
+    raises ValueError so the caller can abort cleanly rather than crashing with a
+    traceback or silently dropping input.
     """
     for line in stdin:
         raw = line.strip()
@@ -156,6 +178,7 @@ def _run_loop(
     client: Any,
     settings: Any,
     max_iterations: int = 100,
+    interactive: bool = True,
 ) -> int:
     iteration = 0
     while iteration < max_iterations:
@@ -187,7 +210,7 @@ def _run_loop(
                 extra=response.extra,
             )
 
-        outputs, done = handle_response(response.content, response.tool_calls)
+        outputs, done = handle_response(response.content, response.tool_calls, interactive=interactive)
         for res in outputs or []:
             if res[LogKey.ROLE] == Role.TOOL:
                 session.log_tool_result(res[LogKey.CONTENT], res[LogKey.NAME], res[LogKey.TOOL_CALL_ID])
@@ -205,6 +228,7 @@ def _run_piped(
     prompt: str,
     file_paths: list[str],
     file_messages: list[str],
+    output_format: str = OUTPUT_FORMAT_TEXT,
 ) -> int:
     """Piped stdin mode: one continuing session, one agent-loop iteration per line.
 
@@ -226,7 +250,9 @@ def _run_piped(
     else:
         slug_hint = ""
 
-    session = _create_session_from_messages(_get_session_dir(), settings.model, messages, slug_hint)
+    session = _create_session_from_messages(
+        _get_session_dir(), settings.model, messages, slug_hint, output_format=output_format,
+    )
     logger.info(f"Session file: {session.file_path}")
 
     if prompt:
@@ -237,7 +263,7 @@ def _run_piped(
         for user_content in _iter_stdin_user_messages(sys.stdin):
             session.log_message(Role.USER.value, user_content)
             ran_any = True
-            rc = _run_loop(session, client, settings)
+            rc = _run_loop(session, client, settings, interactive=False)
             if rc != 0:
                 return rc
     except ValueError as e:
@@ -247,7 +273,7 @@ def _run_piped(
     # A prompt-only invocation with an empty/closed pipe still does the work.
     # Files-only with empty stdin and no prompt is an intentional no-op.
     if not ran_any and prompt:
-        return _run_loop(session, client, settings)
+        return _run_loop(session, client, settings, interactive=False)
 
     return 0
 
@@ -267,10 +293,21 @@ def run(argv: list[str]) -> int:
         metavar="file",
         help="Files to process",
     )
+    parser.add_argument(
+        "--output-format",
+        choices=[OUTPUT_FORMAT_TEXT, OUTPUT_FORMAT_JSONL],
+        default=OUTPUT_FORMAT_TEXT,
+        help="Output format: human-readable text or one JSON event per line",
+    )
     parsed = parser.parse_args(argv)
 
     settings = load()
     piped_mode = _is_piped_mode()
+    # jsonl reserves stdout for the event stream; humans read stderr. Set explicitly
+    # either way so one invocation can't inherit the routing of a previous one.
+    to_stderr = parsed.output_format == OUTPUT_FORMAT_JSONL
+    route_console_output(to_stderr=to_stderr)
+    route_log_output(to_stderr=to_stderr)
 
     if not parsed.files and not parsed.prompt and not piped_mode:
         logger.error("No input files or prompt provided.")
@@ -289,8 +326,14 @@ def run(argv: list[str]) -> int:
     )
 
     if piped_mode:
-        return _run_piped(client, settings, parsed.prompt or "", parsed.files, file_messages)
+        return _run_piped(
+            client, settings, parsed.prompt or "", parsed.files, file_messages,
+            output_format=parsed.output_format,
+        )
 
-    session = _create_session(_get_session_dir(), settings.model, parsed.prompt, parsed.files, file_messages)
+    session = _create_session(
+        _get_session_dir(), settings.model, parsed.prompt, parsed.files, file_messages,
+        output_format=parsed.output_format,
+    )
     logger.info(f"Session file: {session.file_path}")
     return _run_loop(session, client, settings)
