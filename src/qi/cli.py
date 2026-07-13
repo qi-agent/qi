@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import errno
 import importlib
 import logging
 import os
@@ -32,6 +33,16 @@ Global options:
 """
 
 logger = logging.getLogger(__name__)
+
+_WINDOWS = os.name == "nt"
+
+
+def _is_broken_pipe(e: OSError) -> bool:
+    """POSIX raises BrokenPipeError (EPIPE) when the reader goes away; Windows
+    surfaces the same condition as a plain OSError with EINVAL (or EPIPE)."""
+    if isinstance(e, BrokenPipeError):
+        return True
+    return _WINDOWS and e.errno in (errno.EPIPE, errno.EINVAL)
 
 
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, str, list[str]]:
@@ -109,11 +120,14 @@ def main(argv: list[str] | None = None) -> int:
         from qi.commands.run import run as run_cmd
 
         return run_cmd(remaining)
-    except BrokenPipeError:
+    except OSError as e:
+        if not _is_broken_pipe(e):
+            raise
         # The reader went away (e.g. `qi ... | head`). Standard Unix tools die
         # quietly on SIGPIPE; mirror that with the conventional 128+SIGPIPE code.
-        # Point stdout at devnull so the interpreter's exit-time flush of the
-        # broken stream can't print "Exception ignored" noise.
+        # Point stdout at devnull (os.devnull is 'nul' on Windows) so the
+        # interpreter's exit-time flush of the broken stream can't print
+        # "Exception ignored" noise.
         with contextlib.suppress(OSError, ValueError):
             devnull = os.open(os.devnull, os.O_WRONLY)
             os.dup2(devnull, sys.stdout.fileno())

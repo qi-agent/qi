@@ -1,5 +1,6 @@
 """Tests for CLI subcommand routing."""
 
+import errno
 from unittest.mock import Mock
 
 import pytest
@@ -127,6 +128,29 @@ def test_broken_pipe_exits_quietly(
     assert rc == 141
     _, err = capsys.readouterr()
     assert "Traceback" not in err
+
+
+def test_windows_broken_pipe_exits_quietly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """On Windows a closed pipe surfaces as OSError(EINVAL), not BrokenPipeError;
+    it must get the same quiet exit."""
+    mock_run = Mock(side_effect=OSError(errno.EINVAL, "Invalid argument"))
+    monkeypatch.setattr("qi.commands.run.run", mock_run)
+    monkeypatch.setattr("qi.cli._WINDOWS", True)
+    rc = main(["foo.py"])
+    assert rc == 141
+    _, err = capsys.readouterr()
+    assert "Traceback" not in err
+
+
+def test_einval_still_raises_on_posix(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Outside Windows, OSError(EINVAL) is a real error and must not be swallowed."""
+    mock_run = Mock(side_effect=OSError(errno.EINVAL, "Invalid argument"))
+    monkeypatch.setattr("qi.commands.run.run", mock_run)
+    monkeypatch.setattr("qi.cli._WINDOWS", False)
+    with pytest.raises(OSError):
+        main(["foo.py"])
 
 
 def test_return_value_passes_through(monkeypatch: pytest.MonkeyPatch) -> None:
