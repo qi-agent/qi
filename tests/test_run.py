@@ -884,9 +884,46 @@ def test_resume_rejects_input_files(
     mock_client.chat.assert_not_called()
 
 
-def test_resume_requires_piped_stdin(
+def test_resume_interactive_with_prompt_continues_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """In non-piped mode, --resume with --prompt runs one interactive turn on top
+    of the replayed history and appends to the same session file."""
+    monkeypatch.chdir(tmp_path)
+    session_id = "20260712T000000-deadbeef-earlier_question"
+    file_path = _write_session_fixture(tmp_path / ".qi" / "sessions", session_id)
+
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "tty resumed"}]}'
+    )
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
+    ):
+        mock_load.return_value = _piped_settings()
+
+        rc = run(["--resume", session_id, "-p", "one more thing"])
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[0] == {"role": "system", "content": "sys-prompt"}
+    assert {"role": "assistant", "content": "earlier answer"} in messages
+    assert messages[-1] == {"role": "user", "content": "one more thing"}
+
+    lines = [json.loads(line) for line in file_path.read_text().splitlines()]
+    assert any(r.get("content") == "one more thing" for r in lines)
+    assert any(r.get("role") == "assistant" and "tty resumed" in str(r.get("content")) for r in lines)
+
+
+def test_resume_interactive_requires_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """In non-piped mode there is no stdin protocol to drive turns, so --resume
+    without --prompt has nothing to do and fails cleanly."""
     monkeypatch.chdir(tmp_path)
     session_id = "20260712T000000-deadbeef-earlier_question"
     _write_session_fixture(tmp_path / ".qi" / "sessions", session_id)

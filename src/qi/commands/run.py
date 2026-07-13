@@ -347,8 +347,8 @@ def run(argv: list[str]) -> int:
         if parsed.files:
             logger.error("--resume cannot be combined with input files.")
             return 1
-        if not piped_mode:
-            logger.error("--resume requires piped stdin (JSON commands on stdin).")
+        if not piped_mode and not parsed.prompt:
+            logger.error("--resume needs a follow-up turn: pass --prompt, or pipe JSON messages on stdin.")
             return 1
 
         session = _resume_session(_get_session_dir(), parsed.resume, parsed.output_format)
@@ -361,7 +361,11 @@ def run(argv: list[str]) -> int:
             model=settings.model,
             api_key=settings.api_key,
         )
-        return _pipe_commands_into_session(session, client, settings, parsed.prompt or "")
+        if piped_mode:
+            return _pipe_commands_into_session(session, client, settings, parsed.prompt or "")
+
+        session.log_message(Role.USER.value, parsed.prompt)
+        return _run_loop(session, client, settings)
 
     if not parsed.files and not parsed.prompt and not piped_mode:
         logger.error("No input files or prompt provided.")
