@@ -128,6 +128,9 @@ def test_broken_pipe_exits_quietly(
     assert rc == 141
     _, err = capsys.readouterr()
     assert "Traceback" not in err
+    # ...but not wordlessly: a one-line explanation goes to stderr, which is
+    # still attached when only the stdout pipe broke.
+    assert "pipe closed" in err.lower()
 
 
 def test_windows_broken_pipe_exits_quietly(

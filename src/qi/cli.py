@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 
 from qi import __version__
-from qi.lib.logging import QiLogHandler
+from qi.lib.logging import QiLogHandler, route_log_output
 
 SUBCOMMANDS: dict[str, str] = {
     "run": "qi.commands.run",
@@ -131,6 +131,10 @@ def main(argv: list[str] | None = None) -> int:
         with contextlib.suppress(OSError, ValueError):
             devnull = os.open(os.devnull, os.O_WRONLY)
             os.dup2(devnull, sys.stdout.fileno())
+        # Explain on stderr, which is still attached when only stdout broke.
+        # (Route first: the log console may target the now-dead stdout.)
+        route_log_output(to_stderr=True)
+        logger.warning("Output pipe closed by reader; exiting.")
         return 141
 
 
