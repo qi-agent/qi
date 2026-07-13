@@ -15,7 +15,7 @@ from qi.lib.handler import handle_response, route_console_output
 from qi.lib.llm_client import LLMClient
 from qi.lib.logging import route_log_output
 from qi.lib.schema import RESPONSE_FORMAT
-from qi.lib.session import Session
+from qi.lib.session import TURN_ASSISTANT, Session
 from qi.tools import TOOL_SCHEMAS
 
 CHARS_PER_TOKEN = 4
@@ -347,14 +347,18 @@ def run(argv: list[str]) -> int:
         if parsed.files:
             logger.error("--resume cannot be combined with input files.")
             return 1
-        if not piped_mode and not parsed.prompt:
-            logger.error("--resume needs a follow-up turn: pass --prompt, or pipe JSON messages on stdin.")
-            return 1
 
         session = _resume_session(_get_session_dir(), parsed.resume, parsed.output_format)
         if session is None:
             return 1
         logger.info(f"Resumed session file: {session.file_path}")
+
+        # A history that ends on the user's turn (previous run died before the
+        # model replied) is itself a pending follow-up turn.
+        turn_pending = session.turn == TURN_ASSISTANT
+        if not piped_mode and not parsed.prompt and not turn_pending:
+            logger.error("--resume needs a follow-up turn: pass --prompt, or pipe JSON messages on stdin.")
+            return 1
 
         client = LLMClient.create(
             base_url=settings.base_url,
@@ -364,7 +368,8 @@ def run(argv: list[str]) -> int:
         if piped_mode:
             return _pipe_commands_into_session(session, client, settings, parsed.prompt or "")
 
-        session.log_message(Role.USER.value, parsed.prompt)
+        if parsed.prompt:
+            session.log_message(Role.USER.value, parsed.prompt)
         return _run_loop(session, client, settings)
 
     if not parsed.files and not parsed.prompt and not piped_mode:

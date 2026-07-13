@@ -919,6 +919,42 @@ def test_resume_interactive_with_prompt_continues_session(
     assert any(r.get("role") == "assistant" and "tty resumed" in str(r.get("content")) for r in lines)
 
 
+def test_resume_interactive_pending_user_turn_needs_no_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """If the previous run died before the model replied, the session ends on the
+    user's turn; --resume should just run that pending turn without needing -p."""
+    monkeypatch.chdir(tmp_path)
+    session_id = "20260712T000000-deadbeef-earlier_question"
+    file_path = _write_session_fixture(tmp_path / ".qi" / "sessions", session_id)
+    with file_path.open("a") as f:
+        f.write(json.dumps(
+            {"type": "message", "timestamp": "2026-07-12T00:00:04", "role": "user", "content": "pending question"}
+        ) + "\n")
+
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "picked up"}]}'
+    )
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        patch("qi.commands.run._is_piped_mode", return_value=False),
+    ):
+        mock_load.return_value = _piped_settings()
+
+        rc = run(["--resume", session_id])
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[-1] == {"role": "user", "content": "pending question"}
+
+    lines = [json.loads(line) for line in file_path.read_text().splitlines()]
+    assert any(r.get("role") == "assistant" and "picked up" in str(r.get("content")) for r in lines)
+
+
 def test_resume_interactive_requires_prompt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
