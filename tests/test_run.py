@@ -374,10 +374,10 @@ def test_piped_mode_processes_each_user_message(monkeypatch: pytest.MonkeyPatch)
     assert second_messages[-1]["content"] == "second"
 
 
-def _piped_settings() -> Settings:
+def _piped_settings(model: str = "gpt-4o") -> Settings:
     return Settings(
         api_key="sk-test",
-        model="gpt-4o",
+        model=model,
         base_url="https://api.openai.com/v1",
         max_tokens=4096,
         temperature=0.0,
@@ -953,6 +953,132 @@ def test_resume_interactive_pending_user_turn_needs_no_prompt(
 
     lines = [json.loads(line) for line in file_path.read_text().splitlines()]
     assert any(r.get("role") == "assistant" and "picked up" in str(r.get("content")) for r in lines)
+
+
+def test_resume_rejects_traversal_session_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A session id containing path separators or '..' must not escape the
+    sessions directory — resuming would silently read AND append to an
+    unrelated file."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".qi" / "sessions").mkdir(parents=True)
+    # A perfectly resumable file OUTSIDE .qi/sessions that must stay untouched.
+    outside = _write_session_fixture(tmp_path / "notes", "todo")
+    before = outside.read_text()
+
+    mock_client = Mock()
+    for evil_id in ("../../notes/todo", "notes/todo", "..\\notes\\todo", "/etc/passwd"):
+        stdin = _PipedStdin(json.dumps({"role": "user", "content": "hi"}) + "\n")
+        with (
+            patch("qi.commands.run.load") as mock_load,
+            patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+        ):
+            mock_load.return_value = _piped_settings()
+            monkeypatch.setattr("sys.stdin", stdin)
+
+            rc = run(["--resume", evil_id])
+
+        assert rc != 0, f"id {evil_id!r} was accepted"
+
+    mock_client.chat.assert_not_called()
+    assert outside.read_text() == before
+
+
+def test_resume_empty_session_file_logs_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An empty/truncated session file fails cleanly, and the log record carries
+    the traceback (logger.exception) so the user can self-diagnose — the bare
+    exception message for this case is empty."""
+    monkeypatch.chdir(tmp_path)
+    session_dir = tmp_path / ".qi" / "sessions"
+    session_dir.mkdir(parents=True)
+    (session_dir / "empty-session.jsonl").write_text("")
+
+    mock_client = Mock()
+    stdin = _PipedStdin(json.dumps({"role": "user", "content": "hi"}) + "\n")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["--resume", "empty-session"])
+
+    assert rc != 0
+    mock_client.chat.assert_not_called()
+    resume_errors = [r for r in caplog.records if "Cannot resume" in r.getMessage()]
+    assert resume_errors and resume_errors[0].exc_info
+
+
+def test_resume_warns_on_model_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If the configured model differs from the one the session was recorded
+    with, say so instead of silently switching."""
+    monkeypatch.chdir(tmp_path)
+    session_id = "20260712T000000-deadbeef-earlier_question"
+    _write_session_fixture(tmp_path / ".qi" / "sessions", session_id)  # model: gpt-4o
+
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+    stdin = _PipedStdin(json.dumps({"role": "user", "content": "hi"}) + "\n")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+    ):
+        mock_load.return_value = _piped_settings(model="some-other-model")
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["--resume", session_id])
+
+    assert rc == 0
+    warnings = [r for r in caplog.records if r.levelname == "WARNING" and "model" in r.getMessage()]
+    assert warnings, "expected a model-mismatch warning"
+    assert "gpt-4o" in warnings[0].getMessage()
+    assert "some-other-model" in warnings[0].getMessage()
+
+
+def test_resume_piped_with_prompt_precedes_stdin_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--resume with --prompt in piped mode: the prompt is logged as a user turn
+    and the first stdin line drives the call, mirroring _run_piped semantics."""
+    monkeypatch.chdir(tmp_path)
+    session_id = "20260712T000000-deadbeef-earlier_question"
+    _write_session_fixture(tmp_path / ".qi" / "sessions", session_id)
+
+    mock_client = Mock()
+    mock_client.chat.return_value = LLMResponse(
+        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+    )
+    stdin = _PipedStdin(json.dumps({"role": "user", "content": "stdin-line"}) + "\n")
+
+    with (
+        patch("qi.commands.run.load") as mock_load,
+        patch("qi.commands.run.LLMClient.create", return_value=mock_client),
+    ):
+        mock_load.return_value = _piped_settings()
+        monkeypatch.setattr("sys.stdin", stdin)
+
+        rc = run(["--resume", session_id, "-p", "resume-prompt"])
+
+    assert rc == 0
+    mock_client.chat.assert_called_once()
+    messages = mock_client.chat.call_args[0][0]
+    assert messages[-2] == {"role": "user", "content": "resume-prompt"}
+    assert messages[-1] == {"role": "user", "content": "stdin-line"}
+    assert {"role": "assistant", "content": "earlier answer"} in messages
 
 
 def test_resume_interactive_requires_prompt(

@@ -289,6 +289,13 @@ def _pipe_commands_into_session(
 
 def _resume_session(session_dir: Path, session_id: str, output_format: str) -> Session | None:
     """Rebuild a Session from .qi/sessions/<id>.jsonl, or None if it can't be loaded."""
+    # A session id is a bare file stem. Anything that could navigate out of the
+    # sessions directory would make a typo read — and then APPEND to — an
+    # unrelated file.
+    if "/" in session_id or "\\" in session_id or ".." in session_id:
+        logger.error(f"Invalid session id '{session_id}': path separators are not allowed.")
+        return None
+
     file_path = session_dir / f"{session_id}.jsonl"
     if not file_path.exists():
         logger.error(f"No session '{session_id}' found in {session_dir}")
@@ -296,8 +303,10 @@ def _resume_session(session_dir: Path, session_id: str, output_format: str) -> S
 
     try:
         session = Session.from_session_file(file_path)
-    except Exception as e:
-        logger.error(f"Cannot resume session '{session_id}': {e}")
+    except Exception:
+        # Full traceback: e.g. an empty/truncated file raises a bare
+        # StopIteration whose message is empty and useless on its own.
+        logger.exception(f"Cannot resume session '{session_id}'")
         return None
 
     if output_format == OUTPUT_FORMAT_JSONL:
@@ -352,6 +361,11 @@ def run(argv: list[str]) -> int:
         if session is None:
             return 1
         logger.info(f"Resumed session file: {session.file_path}")
+        if session.model and session.model != settings.model:
+            logger.warning(
+                f"Session was recorded with model '{session.model}'; "
+                f"continuing with configured model '{settings.model}'."
+            )
 
         # A history that ends on the user's turn (previous run died before the
         # model replied) is itself a pending follow-up turn.
