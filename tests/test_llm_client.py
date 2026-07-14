@@ -98,6 +98,41 @@ def test_openai_chat_passes_response_format() -> None:
     assert call_kwargs["json"]["response_format"] == response_format
 
 
+def test_openai_chat_drops_response_format_when_tools_present() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": None, "tool_calls": None}}]
+    }
+
+    tools = [{"type": "function", "function": {"name": "ReadFile", "parameters": {"type": "object", "properties": {}}}}]
+    response_format = {"type": "json_schema", "json_schema": {"name": "test", "schema": {"type": "object"}}}
+
+    with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp) as mock_post:
+        client = LLMClient.create(
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o",
+        )
+        client.chat(
+            [{"role": "user", "content": "Hi"}],
+            tools=tools,
+            response_format=response_format,
+        )
+
+    body = mock_post.call_args.kwargs["json"]
+    assert body["tools"] == tools
+    assert "response_format" not in body
+
+
+def test_response_schema_is_valid_for_openai_strict_mode() -> None:
+    # OpenAI strict structured outputs require additionalProperties: false
+    # on every object in the schema, including the root.
+    from qi.lib.schema import RESPONSE_SCHEMA
+
+    assert RESPONSE_SCHEMA["additionalProperties"] is False
+    assert RESPONSE_SCHEMA["properties"]["messages"]["items"]["additionalProperties"] is False
+
+
 def test_openai_parses_tool_calls() -> None:
     mock_resp = Mock(spec=requests.Response)
     mock_resp.status_code = 200

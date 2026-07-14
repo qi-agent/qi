@@ -130,7 +130,9 @@ def handle_response(
             reply_messages.extend(tool_msgs)
     else:
         # done if no error, no tool calls and no asks
-        done = done or error or not {MessageType.QUESTION, MessageType.CALL}.union({item[MessageKey.TYPE] for item in items})
+        done = done or error or {MessageType.QUESTION, MessageType.CALL}.isdisjoint(
+            {item.get(MessageKey.TYPE) for item in items}
+        )
 
     return reply_messages, done
 
