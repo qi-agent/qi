@@ -7,6 +7,8 @@ to accomplish the user's goals.
 You have the ReadFile tool available to read files from the local filesystem. \
 Use it when you need to examine file contents.
 
+You have the Skill tool available to load additional instructions pertaining specific task on demand.
+
 You MUST respond with valid JSON only -- a JSON object with a "messages" array.
 
 Each element in the "messages" array can be a reply or a question. Examples:
