@@ -4,14 +4,13 @@ A skill is a directory containing a SKILL.md file with YAML frontmatter
 (name, description) followed by a markdown body of instructions. Skills are
 discovered from the user config dir (~/.config/qi/skills) and the project
 (.qi/skills); project skills override user skills on name collision.
-
-Frontmatter parsing is intentionally minimal: flat `key: value` pairs only.
-Multi-line values, nesting, and lists are not supported.
 """
 
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 from qi.lib.config import _user_config_path
 
@@ -34,26 +33,26 @@ def user_skills_dir() -> Path:
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     """Split text into (frontmatter dict, body).
 
-    Frontmatter is a leading block delimited by `---` lines containing flat
-    `key: value` pairs. Returns ({}, text) when no valid block is present.
+    Frontmatter is a leading YAML block delimited by `---` lines. Returns
+    ({}, text) when no valid block is present, or when it doesn't parse to a
+    flat mapping.
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}, text
 
-    meta: dict[str, str] = {}
     for i, line in enumerate(lines[1:], start=1):
         if line.strip() == "---":
+            frontmatter = "\n".join(lines[1:i]) + "\n"
             body = "\n".join(lines[i + 1:]).lstrip("\n")
+            try:
+                parsed = yaml.safe_load(frontmatter)
+            except yaml.YAMLError:
+                return {}, text
+            if not isinstance(parsed, dict):
+                return {}, text
+            meta = {str(k): str(v) for k, v in parsed.items()}
             return meta, body
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or ":" not in stripped:
-            continue
-        key, _, value = stripped.partition(":")
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
-        meta[key.strip()] = value
 
     return {}, text  # unterminated frontmatter
 
@@ -70,7 +69,7 @@ def _load_skill(skill_dir: Path) -> Skill | None:
     if not meta:
         logger.warning(f"Skipping skill {skill_dir}: no frontmatter in {SKILL_FILE}")
         return None
-    description = meta.get("description", "")
+    description = meta.get("description", "").strip()
     if not description:
         logger.warning(f"Skipping skill {skill_dir}: missing description in {SKILL_FILE}")
         return None

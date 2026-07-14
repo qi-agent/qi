@@ -56,6 +56,27 @@ class TestParseFrontmatter:
         meta, _ = _parse_frontmatter("---\n# a comment\n\nname: x\ndescription: y\n---\nbody")
         assert meta == {"name": "x", "description": "y"}
 
+    def test_folded_scalar(self) -> None:
+        text = "---\ndescription: >\n  line one\n  line two\nname: x\n---\nbody"
+        meta, _ = _parse_frontmatter(text)
+        assert meta == {"description": "line one line two\n", "name": "x"}
+
+    def test_literal_scalar(self) -> None:
+        text = "---\ndescription: |\n  line one\n  line two\nname: x\n---\nbody"
+        meta, _ = _parse_frontmatter(text)
+        assert meta == {"description": "line one\nline two\n", "name": "x"}
+
+    def test_folded_scalar_blank_line_preserves_break(self) -> None:
+        text = "---\ndescription: >\n  para one\n\n  para two\n---\nbody"
+        meta, _ = _parse_frontmatter(text)
+        assert meta == {"description": "para one\npara two\n"}
+
+    def test_block_scalar_terminated_by_closing_delimiter(self) -> None:
+        text = "---\ndescription: >\n  only paragraph\n---\nbody"
+        meta, body = _parse_frontmatter(text)
+        assert meta == {"description": "only paragraph\n"}
+        assert body == "body"
+
 
 class TestDiscoverSkills:
     def test_finds_project_skill(self, tmp_path: Path) -> None:
@@ -103,6 +124,12 @@ class TestDiscoverSkills:
     def test_nonexistent_dirs(self, tmp_path: Path) -> None:
         skills = discover_skills(cwd=tmp_path, user_dir=tmp_path / "nouser")
         assert skills == {}
+
+    def test_folded_scalar_description(self, tmp_path: Path) -> None:
+        content = "---\nname: caveman\ndescription: >\n  Ultra-compressed mode.\n  Cuts tokens.\n---\nbody"
+        _write_skill(tmp_path / ".qi" / "skills", "caveman", content)
+        skills = discover_skills(cwd=tmp_path, user_dir=tmp_path / "nouser")
+        assert skills["caveman"].description == "Ultra-compressed mode. Cuts tokens."
 
 
 def test_load_skill_body(tmp_path: Path) -> None:
