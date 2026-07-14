@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import requests
 
 from qi.lib.llm_client import LLMClient
-from qi.lib.llm_client._google import GoogleLLMClient
+from qi.lib.llm_client._google import GoogleLLMClient, _sanitize_schema
 from qi.lib.llm_client._openai import OpenAILLMClient
 
 
@@ -272,6 +272,68 @@ def test_google_chat_maps_generation_config() -> None:
     assert gc["maxOutputTokens"] == 200
     assert gc["responseMimeType"] == "application/json"
     assert "responseSchema" in gc
+
+
+def test_sanitize_schema_strips_additional_properties_recursively() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "messages": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["reply", "question"]},
+                    },
+                    "required": ["type"],
+                    "additionalProperties": False,
+                },
+                "description": "Sequence of messages",
+            },
+        },
+        "required": ["messages"],
+        "additionalProperties": False,
+    }
+
+    result = _sanitize_schema(schema)
+
+    assert "additionalProperties" not in result
+    items = result["properties"]["messages"]["items"]
+    assert "additionalProperties" not in items
+    assert items["required"] == ["type"]
+    assert items["properties"]["type"]["enum"] == ["reply", "question"]
+    assert result["properties"]["messages"]["description"] == "Sequence of messages"
+    # the input (a shared module constant in production) must not be mutated
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["messages"]["items"]["additionalProperties"] is False  # type: ignore[index]
+
+
+def test_google_chat_response_schema_has_no_additional_properties() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "OK"}]}}],
+    }
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp) as mock_post:
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        client.chat([{"role": "user", "content": "Hi"}])
+
+    def assert_clean(node: object) -> None:
+        if isinstance(node, dict):
+            assert "additionalProperties" not in node
+            for value in node.values():
+                assert_clean(value)
+        elif isinstance(node, list):
+            for item in node:
+                assert_clean(item)
+
+    schema = mock_post.call_args.kwargs["json"]["generation_config"]["responseSchema"]
+    assert_clean(schema)
 
 
 def test_google_chat_tools_in_body() -> None:

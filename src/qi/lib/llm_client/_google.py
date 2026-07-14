@@ -18,6 +18,15 @@ def _truncate(obj: object, max_len: int = 10000) -> str:
     return s
 
 
+def _sanitize_schema(node: Any) -> Any:
+    """Gemini's responseSchema is an OpenAPI subset that rejects additionalProperties."""
+    if isinstance(node, dict):
+        return {k: _sanitize_schema(v) for k, v in node.items() if k != "additionalProperties"}
+    if isinstance(node, list):
+        return [_sanitize_schema(item) for item in node]
+    return node
+
+
 DEFAULT_MODEL = "gemini-flash-latest"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 API_URL_TEMPLATE = DEFAULT_BASE_URL + "/v1beta/models/{model}:generateContent"
@@ -115,7 +124,7 @@ class GoogleLLMClient:
         generation_config: dict[str, Any] = make_dict_optional_keys({
             "temperature": temperature,
             "responseMimeType": "application/json",
-            "responseSchema": RESPONSE_SCHEMA,
+            "responseSchema": _sanitize_schema(RESPONSE_SCHEMA),
             "maxOutputTokens": max_tokens or None,
         })
         body: dict[str, Any] = make_dict_optional_keys({
