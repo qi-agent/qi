@@ -587,3 +587,90 @@ def test_factory_detects_google_without_scheme() -> None:
         model="gemini-flash-latest",
     )
     assert isinstance(client, GoogleLLMClient)
+
+
+def test_openai_chat_captures_finish_reason_stop() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": "Hello!", "tool_calls": None}, "finish_reason": "stop"}]
+    }
+
+    with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o",
+        )
+        result = client.chat([{"role": "user", "content": "Hi"}])
+
+    assert result.finish_reason == "stop"
+
+
+def test_openai_chat_captures_finish_reason_length() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": "truncated...", "tool_calls": None}, "finish_reason": "length"}]
+    }
+
+    with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o",
+        )
+        result = client.chat([{"role": "user", "content": "Hi"}])
+
+    assert result.finish_reason == "length"
+
+
+def test_openai_chat_finish_reason_defaults_to_empty() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": "Hello!", "tool_calls": None}}]
+    }
+
+    with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://api.openai.com/v1",
+            model="gpt-4o",
+        )
+        result = client.chat([{"role": "user", "content": "Hi"}])
+
+    assert result.finish_reason == ""
+
+
+def test_google_chat_maps_finish_reason_stop() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "OK"}]}, "finishReason": "STOP"}],
+    }
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        result = client.chat([{"role": "user", "content": "Hi"}])
+
+    assert result.finish_reason == "stop"
+
+
+def test_google_chat_maps_finish_reason_max_tokens_to_length() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "truncat"}]}, "finishReason": "MAX_TOKENS"}],
+    }
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        result = client.chat([{"role": "user", "content": "Hi"}])
+
+    assert result.finish_reason == "length"

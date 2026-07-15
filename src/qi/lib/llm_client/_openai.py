@@ -74,10 +74,12 @@ class OpenAILLMClient:
             resp.raise_for_status()
 
         choice: dict[str, Any]
+        finish_reason: str
         try:
             data: Any = resp.json()
             logger.info(f"[INF] <<< Response:\n{data}")
             choice = data["choices"][0]["message"]
+            finish_reason = data["choices"][0].get("finish_reason") or ""
         except Exception as e:
             logger.warning(f"Error decoding API response: {e}")
             logger.info(f"[ERR] Error decoding API response: {e}\nRaw content:\n{resp.text}")
@@ -100,7 +102,7 @@ class OpenAILLMClient:
         ]
         if tool_calls:
             logger.info(f"Calling {len(tool_calls)} tools: {[x.name for x in tool_calls]}")
-        return LLMResponse(content=content, tool_calls=tool_calls)
+        return LLMResponse(content=content, tool_calls=tool_calls, finish_reason=finish_reason)
 
     def responses_chat(
         self,
