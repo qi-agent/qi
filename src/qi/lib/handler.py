@@ -1,24 +1,37 @@
-"""Response handler for LLM structured JSON responses and native tool execution."""
+"""Response handler: structural done-ness signaling and native tool execution.
+
+The turn-termination protocol is structural, mirroring what the provider APIs
+already report (OpenAI finish_reason, Anthropic stop_reason, Gemini
+functionCall parts):
+
+- tool calls present  -> execute them, keep looping
+- no tool calls       -> the model ended its turn; content is the final reply
+
+Questions to the user are an AskUser tool call, so content is plain markdown
+and is never parsed.
+"""
 
 import json
 import logging
-import re
-from typing import Any, TypeAlias, cast
+from typing import Any
 
 from rich.console import Console
 from rich.markdown import Markdown
 
-from qi.lib.constants import (
-    LogKey,
-    MessageKey,
-    MessageType,
-    Role,
-)
+from qi.lib.constants import LogKey, Role
 from qi.lib.llm_client._types import ToolCall
 from qi.tools import TOOL_MAP
+from qi.tools.ask_user import AskUserTool
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+ASK_USER_TOOL_NAME = AskUserTool.name
+
+# Piped mode: stdin carries the message protocol, so a question can never read
+# a raw answer. This note closes the tool call (keeping the providers' message
+# protocol valid) while the turn ends and the next user message is the answer.
+DEFERRED_ANSWER_NOTE = "[Question delivered to the user. Their next message is the answer.]"
 
 
 def route_console_output(to_stderr: bool) -> None:
@@ -27,8 +40,7 @@ def route_console_output(to_stderr: bool) -> None:
     console = Console(stderr=to_stderr)
 
 ToolMap = dict[str, Any]
-FnTool = Any
-JSONPayload: TypeAlias = dict[str, Any] | list[dict[str, Any]]
+
 
 def _truncate(obj: object, max_len: int = 5000) -> str:
     s = str(obj)
@@ -37,103 +49,47 @@ def _truncate(obj: object, max_len: int = 5000) -> str:
     return s
 
 
-def _strip_code_fence(raw_content: str) -> str:
-    content = re.sub(r'\A\s*```\w*\n?', '', raw_content)
-    if content == raw_content:
-        return raw_content  # no code fence found, return original
-    content = re.sub(r'\n?```\s*\Z', '', content)
-    return content.strip()
-
-
-def parse_json_best_effort(s: str) -> JSONPayload:
-    try:
-        body = cast(JSONPayload, json.loads(s))
-        return body
-    except json.JSONDecodeError as e:
-        # handle extra trailing content
-        if e.msg == "Extra data" and e.pos >= 2:  # expect at least 2 characters in JSON: [] or {}
-            logger.warning(f"Trailing data ({len(e.doc) - e.pos} chars) found in LLM response while parsing as JSON: {e.doc[e.pos:e.pos+200]}...")
-            logger.warning("Trying to parse the preceeding content")
-            return cast(JSONPayload, json.loads(s[:e.pos]))
-        else:
-            raise  # can't handle, re-raise
+def _question_from_args(args: dict[str, object] | list[object]) -> str:
+    if isinstance(args, dict):
+        return str(args.get("question", ""))
+    return str(args[0]) if args else ""
 
 
 def handle_response(
     content: str | None,  # OpenRouter would give content = None when combined with tool calling
     tool_calls: list[ToolCall],
     interactive: bool = True,
+    finish_reason: str = "",
 ) -> tuple[list[dict[str, Any]] | None, bool]:
-    content = _strip_code_fence(content or "")
+    if finish_reason == "length":
+        logger.warning("LLM response was truncated (finish_reason=length); consider raising max_tokens.")
+
+    if content:
+        console.print(Markdown(content), style="bold")
+
     reply_messages: list[dict[str, Any]] = []
-    done = False
-    error = False
-    items: list[dict[str, Any]] = []
-    try:
-        body = parse_json_best_effort(content) if content else []
-        if isinstance(body, dict):
-            items = body.get("messages", [body])
+    awaiting_user = False
+    for tc in tool_calls:
+        if tc.name == ASK_USER_TOOL_NAME:
+            question = _question_from_args(tc.args)
+            console.print(Markdown(question), style="bold")
+            if interactive:
+                answer = console.input("[bold cyan]> [/bold cyan]")
+            else:
+                answer = DEFERRED_ANSWER_NOTE
+                awaiting_user = True
+            reply_messages.append({
+                LogKey.ROLE.value: Role.TOOL.value,
+                LogKey.TOOL_CALL_ID.value: tc.id,
+                LogKey.NAME.value: tc.name,
+                LogKey.CONTENT.value: answer,
+            })
         else:
-            items = body if isinstance(body, list) else [body]
-    except json.JSONDecodeError as e:
-        logger.warning("Unable to parse LLM response as JSON. Correcting it")
-        logger.info(f"[ERR] LLM response is not valid JSON: {e}\n  Full response:\n{content}", exc_info=True)
-        error = True
-        # Treat the unparseable text as a final reply rather than nudging the model to retry.
-        items = [{MessageKey.TYPE: MessageType.REPLY.value, MessageKey.CONTENT: content, MessageKey.DONE: True}]
-    for item in items:
-        done = item.get(MessageKey.DONE, False) or False
-        match item.get(MessageKey.TYPE):
-            case MessageType.THOUGHT:
-                content = item.get(MessageKey.CONTENT, "")
-                logger.debug("Thought: %s", content)
-                console.print(content, style="dim")
+            reply_messages.extend(handle_tool_calls([tc]))
 
-            case MessageType.REPLY:
-                console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
-
-            case MessageType.QUESTION:
-                console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
-                if interactive:
-                    answer = console.input("[bold cyan]> [/bold cyan]")
-                    reply_messages.append({LogKey.ROLE.value: Role.USER.value, LogKey.CONTENT.value: answer})
-                else:
-                    # Piped mode: stdin carries the message protocol, so never read a
-                    # raw answer here. End the turn; the next user message on stdin
-                    # is the answer.
-                    done = True
-
-            case MessageType.CONCLUSION:
-                console.print(Markdown(item[MessageKey.CONTENT]), style="bold")
-                done = True
-
-            case MessageType.CALL:
-                # inline assistant message tool call - Google API does this
-                # {"type": "call", "api": "default_api:ReadFile", "parameters": ["olaf.txt"]}
-                # reply_messages.append({"role": "assistant", "content": "", "tool_calls": [item]})
-                # but sometimes:
-                call_res = handle_tool_calls([
-                    ToolCall(name=item[MessageKey.API].removeprefix("default_api:"), args=item[MessageKey.PARAMETERS])
-                ])
-                reply_messages.append(call_res[0])
-            case _:
-                done = True
-                logger.warning("Unknown type: %s", item.get(MessageKey.TYPE, "unknown"))
-
-
-    # top-level tool calls
-    if tool_calls:
-        if done:
-            logger.warning(f"Ignoring tool call requests from LLM since it signalled done: {tool_calls}")
-        else:
-            tool_msgs = handle_tool_calls(tool_calls)
-            reply_messages.extend(tool_msgs)
-    else:
-        # done if no error, no tool calls and no asks
-        done = done or error or {MessageType.QUESTION, MessageType.CALL}.isdisjoint(
-            {item.get(MessageKey.TYPE) for item in items}
-        )
-
+    # Structural done-ness: no tool calls means the model ended its turn. A
+    # deferred question also ends the turn — the next stdin message answers it.
+    done = not tool_calls or awaiting_user
     return reply_messages, done
 
 

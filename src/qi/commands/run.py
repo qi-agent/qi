@@ -14,7 +14,6 @@ from qi.lib.context import get_system_prompt
 from qi.lib.handler import handle_response, route_console_output
 from qi.lib.llm_client import LLMClient
 from qi.lib.logging import route_log_output
-from qi.lib.schema import RESPONSE_FORMAT
 from qi.lib.session import TURN_ASSISTANT, Session
 from qi.lib.skills import discover_skills, load_skill_body
 from qi.tools import TOOL_SCHEMAS
@@ -192,7 +191,6 @@ def _run_loop(
             response = client.chat(
                 session.messages,
                 tools=TOOL_SCHEMAS,
-                response_format=RESPONSE_FORMAT,
                 temperature=settings.temperature,
                 max_tokens=settings.max_tokens,
             )
@@ -214,7 +212,12 @@ def _run_loop(
                 extra=response.extra,
             )
 
-        outputs, done = handle_response(response.content, response.tool_calls, interactive=interactive)
+        outputs, done = handle_response(
+            response.content,
+            response.tool_calls,
+            interactive=interactive,
+            finish_reason=response.finish_reason,
+        )
         for res in outputs or []:
             if res[LogKey.ROLE] == Role.TOOL:
                 session.log_tool_result(res[LogKey.CONTENT], res[LogKey.NAME], res[LogKey.TOOL_CALL_ID])

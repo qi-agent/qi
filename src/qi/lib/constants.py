@@ -35,23 +35,4 @@ class LogMetaKey(StrEnum):
     MODEL = "model"
 
 
-
-class MessageKey(StrEnum):
-    """Keys in the response message we require from LLM"""
-    API = "api"  # Google returns this: '{"type": "call", "api": "default_api:Bash", "parameters": ["git branch --show-current"]}'
-    DONE = "done"
-    TYPE = "type"
-    CONTENT = "content"
-    PARAMETERS = "parameters"
-
-
-class MessageType(StrEnum):
-    ASK = "ask"
-    CALL = "call"
-    CONCLUSION = "conclusion"
-    REPLY = "reply"
-    THOUGHT = "thought"
-    QUESTION = "question"
-
-
 LogRecord: TypeAlias = dict[str, str | dict[str, Any] | list[Any]]
