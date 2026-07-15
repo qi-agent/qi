@@ -37,7 +37,6 @@ class OpenAILLMClient:
     def chat(
         self,
         messages: list[dict[str, str | dict[str, Any] | list[Any]]],
-        response_format: dict[str, object] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 0,
         tools: list[dict[str, object]] | None = None,
@@ -55,13 +54,8 @@ class OpenAILLMClient:
         if max_tokens:
             body["max_tokens"] = max_tokens
         if tools or self.tools:
-            # Never combine tools with response_format: many OpenRouter providers
-            # implement strict structured output via grammar-constrained decoding,
-            # which makes emitting a tool call impossible.
             body["tools"] = tools or self.tools
             body["tool_choice"] = "auto"
-        elif response_format is not None:
-            body["response_format"] = response_format
 
         url = f"{self.base_url}/chat/completions"
 

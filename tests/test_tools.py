@@ -106,3 +106,28 @@ class TestSkillTool:
         func = schema["function"]
         assert func["name"] == "Skill"
         assert "name" in func["parameters"]["required"]
+
+
+class TestAskUserTool:
+    def test_registered(self) -> None:
+        from qi.tools import TOOL_MAP, TOOL_SCHEMAS
+
+        assert "AskUser" in TOOL_MAP
+        assert any(s["function"]["name"] == "AskUser" for s in TOOL_SCHEMAS)
+
+    def test_schema_structure(self) -> None:
+        from qi.tools.ask_user import AskUserTool
+
+        schema = AskUserTool().schema
+        assert schema["type"] == "function"
+        func = schema["function"]
+        assert func["name"] == "AskUser"
+        assert "question" in func["parameters"]["required"]
+
+    def test_fallback_call_echoes_question(self) -> None:
+        # Direct dispatch (outside handle_response's interception) must not
+        # block on stdin; it returns a note carrying the question.
+        from qi.tools.ask_user import AskUserTool
+
+        result = AskUserTool()("which branch?")
+        assert "which branch?" in result

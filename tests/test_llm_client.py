@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import requests
 
 from qi.lib.llm_client import LLMClient
-from qi.lib.llm_client._google import GoogleLLMClient, _sanitize_schema
+from qi.lib.llm_client._google import GoogleLLMClient
 from qi.lib.llm_client._openai import OpenAILLMClient
 
 
@@ -75,62 +75,23 @@ def test_openai_chat_passes_tools() -> None:
     assert call_kwargs["json"]["tools"] == tools
 
 
-def test_openai_chat_passes_response_format() -> None:
+def test_openai_chat_sends_no_response_format() -> None:
+    # The message protocol is structural (tool calls + finish_reason); the body
+    # must not constrain output to JSON.
     mock_resp = Mock(spec=requests.Response)
     mock_resp.status_code = 200
     mock_resp.json.return_value = {
-        "choices": [{"message": {"content": "{}", "tool_calls": None}}]
+        "choices": [{"message": {"content": "Hello!", "tool_calls": None}}]
     }
-
-    response_format = {"type": "json_schema", "json_schema": {"name": "test", "schema": {"type": "object"}}}
 
     with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp) as mock_post:
         client = LLMClient.create(
             base_url="https://api.openai.com/v1",
             model="gpt-4o",
         )
-        client.chat(
-            [{"role": "user", "content": "Hi"}],
-            response_format=response_format,
-        )
+        client.chat([{"role": "user", "content": "Hi"}])
 
-    call_kwargs = mock_post.call_args.kwargs
-    assert call_kwargs["json"]["response_format"] == response_format
-
-
-def test_openai_chat_drops_response_format_when_tools_present() -> None:
-    mock_resp = Mock(spec=requests.Response)
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "choices": [{"message": {"content": None, "tool_calls": None}}]
-    }
-
-    tools = [{"type": "function", "function": {"name": "ReadFile", "parameters": {"type": "object", "properties": {}}}}]
-    response_format = {"type": "json_schema", "json_schema": {"name": "test", "schema": {"type": "object"}}}
-
-    with patch("qi.lib.llm_client._openai.requests.post", return_value=mock_resp) as mock_post:
-        client = LLMClient.create(
-            base_url="https://api.openai.com/v1",
-            model="gpt-4o",
-        )
-        client.chat(
-            [{"role": "user", "content": "Hi"}],
-            tools=tools,
-            response_format=response_format,
-        )
-
-    body = mock_post.call_args.kwargs["json"]
-    assert body["tools"] == tools
-    assert "response_format" not in body
-
-
-def test_response_schema_is_valid_for_openai_strict_mode() -> None:
-    # OpenAI strict structured outputs require additionalProperties: false
-    # on every object in the schema, including the root.
-    from qi.lib.schema import RESPONSE_SCHEMA
-
-    assert RESPONSE_SCHEMA["additionalProperties"] is False
-    assert RESPONSE_SCHEMA["properties"]["messages"]["items"]["additionalProperties"] is False
+    assert "response_format" not in mock_post.call_args.kwargs["json"]
 
 
 def test_openai_parses_tool_calls() -> None:
@@ -270,70 +231,9 @@ def test_google_chat_maps_generation_config() -> None:
     gc = body["generation_config"]
     assert gc["temperature"] == 0.5
     assert gc["maxOutputTokens"] == 200
-    assert gc["responseMimeType"] == "application/json"
-    assert "responseSchema" in gc
-
-
-def test_sanitize_schema_strips_additional_properties_recursively() -> None:
-    schema = {
-        "type": "object",
-        "properties": {
-            "messages": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "type": {"type": "string", "enum": ["reply", "question"]},
-                    },
-                    "required": ["type"],
-                    "additionalProperties": False,
-                },
-                "description": "Sequence of messages",
-            },
-        },
-        "required": ["messages"],
-        "additionalProperties": False,
-    }
-
-    result = _sanitize_schema(schema)
-
-    assert "additionalProperties" not in result
-    items = result["properties"]["messages"]["items"]
-    assert "additionalProperties" not in items
-    assert items["required"] == ["type"]
-    assert items["properties"]["type"]["enum"] == ["reply", "question"]
-    assert result["properties"]["messages"]["description"] == "Sequence of messages"
-    # the input (a shared module constant in production) must not be mutated
-    assert schema["additionalProperties"] is False
-    assert schema["properties"]["messages"]["items"]["additionalProperties"] is False  # type: ignore[index]
-
-
-def test_google_chat_response_schema_has_no_additional_properties() -> None:
-    mock_resp = Mock(spec=requests.Response)
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "candidates": [{"content": {"parts": [{"text": "OK"}]}}],
-    }
-
-    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp) as mock_post:
-        client = LLMClient.create(
-            base_url="https://generativelanguage.googleapis.com",
-            model="gemini-flash-latest",
-            api_key="goog-key",
-        )
-        client.chat([{"role": "user", "content": "Hi"}])
-
-    def assert_clean(node: object) -> None:
-        if isinstance(node, dict):
-            assert "additionalProperties" not in node
-            for value in node.values():
-                assert_clean(value)
-        elif isinstance(node, list):
-            for item in node:
-                assert_clean(item)
-
-    schema = mock_post.call_args.kwargs["json"]["generation_config"]["responseSchema"]
-    assert_clean(schema)
+    # No forced-JSON output: replies are plain markdown.
+    assert "responseMimeType" not in gc
+    assert "responseSchema" not in gc
 
 
 def test_google_chat_tools_in_body() -> None:

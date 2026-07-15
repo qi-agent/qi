@@ -5,7 +5,6 @@ import requests
 
 from qi.lib.constants import LogKey, Role
 from qi.lib.llm_client._types import LLMResponse, ToolCall
-from qi.lib.schema import RESPONSE_SCHEMA
 from qi.lib.utils import make_dict_optional_keys
 
 logger = logging.getLogger(__name__)
@@ -16,15 +15,6 @@ def _truncate(obj: object, max_len: int = 10000) -> str:
     if len(s) > max_len:
         s = s[:max_len] + f"... (truncated, {len(s)} total chars)"
     return s
-
-
-def _sanitize_schema(node: Any) -> Any:
-    """Gemini's responseSchema is an OpenAPI subset that rejects additionalProperties."""
-    if isinstance(node, dict):
-        return {k: _sanitize_schema(v) for k, v in node.items() if k != "additionalProperties"}
-    if isinstance(node, list):
-        return [_sanitize_schema(item) for item in node]
-    return node
 
 
 DEFAULT_MODEL = "gemini-flash-latest"
@@ -115,7 +105,6 @@ class GoogleLLMClient:
     def chat(
         self,
         messages: list[dict[str, str | dict[str, Any] | list[Any]]],
-        response_format: dict[str, object] | None = None,
         temperature: float = 0.0,
         max_tokens: int = 0,
         tools: list[dict[str, object]] | None = None,
@@ -129,8 +118,6 @@ class GoogleLLMClient:
 
         generation_config: dict[str, Any] = make_dict_optional_keys({
             "temperature": temperature,
-            "responseMimeType": "application/json",
-            "responseSchema": _sanitize_schema(RESPONSE_SCHEMA),
             "maxOutputTokens": max_tokens or None,
         })
         body: dict[str, Any] = make_dict_optional_keys({

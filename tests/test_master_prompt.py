@@ -116,3 +116,11 @@ def test_appended_via_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert "<PROJECT_INSTRUCTIONS>" in messages[0]["content"]
     assert "Always write tests first." in messages[0]["content"]
     assert "</PROJECT_INSTRUCTIONS>" in messages[0]["content"]
+
+
+def test_prompt_uses_structural_protocol() -> None:
+    """The prompt must describe the tool-call loop, not a JSON content protocol."""
+    assert "AskUser" in SYSTEM_PROMPT
+    assert "JSON" not in SYSTEM_PROMPT
+    assert '"messages"' not in SYSTEM_PROMPT
+    assert "done=true" not in SYSTEM_PROMPT

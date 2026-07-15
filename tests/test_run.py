@@ -56,10 +56,7 @@ def test_files_sent_as_user_messages_capsys(capsys: pytest.CaptureFixture[str]) 
     """LLM response is printed to stdout."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content=(
-            '{"messages": [{"type": "reply", "content": "analysis complete"},'
-            ' {"type": "conclusion", "content": ""}]}'
-        )
+        content="analysis complete"
     )
 
     with (
@@ -202,7 +199,7 @@ def test_tool_calls_are_executed() -> None:
     mock_client = Mock()
     mock_client.chat.side_effect = [
         LLMResponse(
-            content='{"messages": [{"type": "thought", "content": "Need to read the file"}]}',
+            content="Need to read the file",
             tool_calls=[
                 ToolCall(
                     style="openai",
@@ -213,7 +210,7 @@ def test_tool_calls_are_executed() -> None:
             ],
         ),
         LLMResponse(
-            content='{"messages": [{"type": "reply", "content": "done"}, {"type": "conclusion", "content": ""}]}',
+            content="done",
         ),
     ]
 
@@ -238,8 +235,8 @@ def test_tool_calls_are_executed() -> None:
     assert mock_client.chat.call_count == 2
 
 
-def test_passes_tools_and_response_format() -> None:
-    """Tools and response_format are passed to the LLM client."""
+def test_passes_tools_without_response_format() -> None:
+    """Tools are passed to the LLM client; no JSON response_format is forced."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(content="{}")
 
@@ -263,8 +260,7 @@ def test_passes_tools_and_response_format() -> None:
 
     kwargs = mock_client.chat.call_args.kwargs
     assert "tools" in kwargs
-    assert "response_format" in kwargs
-    assert kwargs["response_format"]["type"] == "json_schema"
+    assert "response_format" not in kwargs
 
 
 class _PipedStdin(io.StringIO):
@@ -275,7 +271,7 @@ class _PipedStdin(io.StringIO):
 def test_piped_mode_does_not_require_prompt_or_files(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
     stdin = _PipedStdin(json.dumps({"role": "user", "content": "from-pipe"}) + "\n")
 
@@ -302,7 +298,7 @@ def test_piped_mode_does_not_require_prompt_or_files(monkeypatch: pytest.MonkeyP
 def test_piped_mode_does_not_inject_default_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
     stdin = _PipedStdin(json.dumps({"role": "user", "content": "literal-user-message"}) + "\n")
 
@@ -331,8 +327,8 @@ def test_piped_mode_does_not_inject_default_prompt(monkeypatch: pytest.MonkeyPat
 def test_piped_mode_processes_each_user_message(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_client = Mock()
     mock_client.chat.side_effect = [
-        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "one"}]}'),
-        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "two"}]}'),
+        LLMResponse(content="one"),
+        LLMResponse(content="two"),
     ]
     stdin = _PipedStdin(
         "\n".join(
@@ -390,7 +386,7 @@ def test_piped_mode_prompt_and_stdin_combined(monkeypatch: pytest.MonkeyPatch) -
     turn in between."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
     stdin = _PipedStdin(json.dumps({"role": "user", "content": "stdin-line"}) + "\n")
 
@@ -419,7 +415,7 @@ def test_piped_mode_prompt_only_empty_stdin_runs_once(monkeypatch: pytest.Monkey
     """A prompt-only invocation with an empty/closed pipe still runs one loop."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
     stdin = _PipedStdin("")
 
@@ -443,7 +439,7 @@ def test_piped_mode_invalid_json_fails_cleanly(monkeypatch: pytest.MonkeyPatch) 
     """A malformed JSON line aborts with a non-zero code and does not skip ahead."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
     stdin = _PipedStdin(
         "this is not json\n" + json.dumps({"role": "user", "content": "after"}) + "\n"
@@ -467,7 +463,7 @@ def test_piped_mode_non_dict_line_fails_cleanly(monkeypatch: pytest.MonkeyPatch)
     """Valid JSON that isn't an object aborts cleanly instead of raising AttributeError."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
     stdin = _PipedStdin(
         "[1, 2]\n" + json.dumps({"role": "user", "content": "after"}) + "\n"
@@ -492,7 +488,7 @@ def test_output_format_accepts_jsonl_and_text(monkeypatch: pytest.MonkeyPatch) -
     for output_format in ("jsonl", "text"):
         mock_client = Mock()
         mock_client.chat.return_value = LLMResponse(
-            content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+            content="done"
         )
         stdin = _PipedStdin(json.dumps({"role": "user", "content": "hi"}) + "\n")
 
@@ -541,7 +537,7 @@ def test_jsonl_mode_stdout_is_pure_jsonl(
     human-readable rendering must not pollute the stream."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "all done"}]}'
+        content="all done"
     )
 
     rc = _run_piped_jsonl(
@@ -564,7 +560,7 @@ def test_jsonl_mode_emits_session_events(
     events carrying role/content, including the user turn and the assistant reply."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "all done"}]}'
+        content="all done"
     )
 
     rc = _run_piped_jsonl(
@@ -589,13 +585,13 @@ def test_jsonl_mode_emits_tool_call_and_result_events(
     mock_client = Mock()
     mock_client.chat.side_effect = [
         LLMResponse(
-            content='{"messages": [{"type": "thought", "content": "reading"}]}',
+            content="reading",
             tool_calls=[
                 ToolCall(style="openai", id="call_1", name="ReadFile", args={"path": "t.py"})
             ],
         ),
         LLMResponse(
-            content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+            content="done"
         ),
     ]
 
@@ -621,7 +617,7 @@ def test_one_shot_mode_supports_jsonl_output(
     pure JSONL event stream, human rendering goes to stderr."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "one-shot done"}]}'
+        content="one-shot done"
     )
 
     with (
@@ -651,7 +647,7 @@ def test_text_mode_emits_no_jsonl_events(
     """Default text mode keeps human-readable output and no JSON event lines."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "plain text done"}]}'
+        content="plain text done"
     )
 
     rc = _run_piped_jsonl(
@@ -678,7 +674,7 @@ def test_piped_mode_skips_unknown_command_objects(monkeypatch: pytest.MonkeyPatc
     continues with the next line. EOF — not any in-band command — ends the run."""
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
 
     rc = _run_piped_jsonl(
@@ -701,12 +697,15 @@ def test_piped_mode_skips_unknown_command_objects(monkeypatch: pytest.MonkeyPatc
 def test_piped_mode_question_is_answered_by_next_stdin_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """In piped mode a question must never read raw stdin (that would swallow
-    protocol lines); it ends the turn and the next user message is the answer."""
+    """In piped mode an AskUser call must never read raw stdin (that would
+    swallow protocol lines); it ends the turn with a deferred tool result and
+    the next user message is the answer."""
     mock_client = Mock()
     mock_client.chat.side_effect = [
-        LLMResponse(content='{"messages": [{"type": "question", "content": "which one?"}]}'),
-        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "done"}]}'),
+        LLMResponse(tool_calls=[
+            ToolCall(style="openai", id="call_ask", name="AskUser", args={"question": "which one?"})
+        ]),
+        LLMResponse(content="done"),
     ]
 
     with patch(
@@ -726,15 +725,19 @@ def test_piped_mode_question_is_answered_by_next_stdin_message(
     assert rc == 0
     assert mock_client.chat.call_count == 2
     second_messages = mock_client.chat.call_args_list[1][0][0]
+    # The deferred tool result keeps the tool-call protocol valid, then the
+    # stdin line arrives as the answering user turn.
+    assert second_messages[-2]["role"] == "tool"
+    assert second_messages[-2]["tool_call_id"] == "call_ask"
     assert second_messages[-1] == {"role": "user", "content": "my answer"}
 
 
 def test_piped_mode_question_at_eof_ends_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A question when stdin is exhausted must not raise EOFError; the run ends."""
+    """An AskUser call when stdin is exhausted must not raise EOFError; the run ends."""
     mock_client = Mock()
-    mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "question", "content": "anyone there?"}]}'
-    )
+    mock_client.chat.return_value = LLMResponse(tool_calls=[
+        ToolCall(style="openai", id="call_ask", name="AskUser", args={"question": "anyone there?"})
+    ])
 
     with patch(
         "rich.console.Console.input",
@@ -754,11 +757,14 @@ def test_piped_mode_question_at_eof_ends_cleanly(monkeypatch: pytest.MonkeyPatch
 def test_interactive_question_still_prompts_on_console(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Outside piped mode the question flow keeps reading the answer interactively."""
+    """Outside piped mode an AskUser call reads the answer interactively and
+    feeds it back as the tool result."""
     mock_client = Mock()
     mock_client.chat.side_effect = [
-        LLMResponse(content='{"messages": [{"type": "question", "content": "which one?"}]}'),
-        LLMResponse(content='{"messages": [{"type": "conclusion", "content": "done"}]}'),
+        LLMResponse(tool_calls=[
+            ToolCall(style="openai", id="call_ask", name="AskUser", args={"question": "which one?"})
+        ]),
+        LLMResponse(content="done"),
     ]
 
     with (
@@ -776,7 +782,7 @@ def test_interactive_question_still_prompts_on_console(
     assert rc == 0
     assert mock_client.chat.call_count == 2
     second_messages = mock_client.chat.call_args_list[1][0][0]
-    assert second_messages[-1]["role"] == "user"
+    assert second_messages[-1]["role"] == "tool"
     assert second_messages[-1]["content"] == "typed-answer"
 
 
@@ -806,7 +812,7 @@ def test_resume_continues_existing_session(
 
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "resumed done"}]}'
+        content="resumed done"
     )
     stdin = _PipedStdin(json.dumps({"role": "user", "content": "follow-up"}) + "\n")
 
@@ -895,7 +901,7 @@ def test_resume_interactive_with_prompt_continues_session(
 
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "tty resumed"}]}'
+        content="tty resumed"
     )
 
     with (
@@ -934,7 +940,7 @@ def test_resume_interactive_pending_user_turn_needs_no_prompt(
 
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "picked up"}]}'
+        content="picked up"
     )
 
     with (
@@ -1029,7 +1035,7 @@ def test_resume_warns_on_model_mismatch(
 
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
     stdin = _PipedStdin(json.dumps({"role": "user", "content": "hi"}) + "\n")
 
@@ -1060,7 +1066,7 @@ def test_resume_piped_with_prompt_precedes_stdin_message(
 
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
     stdin = _PipedStdin(json.dumps({"role": "user", "content": "stdin-line"}) + "\n")
 
@@ -1186,7 +1192,7 @@ def test_skill_flag_in_piped_mode(tmp_path, monkeypatch: pytest.MonkeyPatch) -> 
 
     mock_client = Mock()
     mock_client.chat.return_value = LLMResponse(
-        content='{"messages": [{"type": "conclusion", "content": "done"}]}'
+        content="done"
     )
     stdin = _PipedStdin(json.dumps({"role": "user", "content": "from-pipe"}) + "\n")
 
