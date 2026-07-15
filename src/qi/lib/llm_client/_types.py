@@ -46,6 +46,9 @@ class LLMResponse:
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list[ToolCall])
     extra: dict[str, Any] = field(default_factory=dict[str, Any])
+    # Normalized reason the model stopped generating: "stop", "tool_calls",
+    # "length" (truncated by max_tokens), or "" when the provider omitted it.
+    finish_reason: str = ""
 
 
 __all__ = ["LLMResponse", "ToolCall"]

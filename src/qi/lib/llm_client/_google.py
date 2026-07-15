@@ -151,6 +151,10 @@ class GoogleLLMClient:
         logger.info("<<<<<<<<<<<< Response:\n%s", _truncate(data))
 
         candidate = data["candidates"][0]
+        # Gemini uses its own vocabulary; normalize to the OpenAI-style values
+        # the rest of qi branches on.
+        raw_finish: str = candidate.get("finishReason") or ""
+        finish_reason = {"STOP": "stop", "MAX_TOKENS": "length"}.get(raw_finish, raw_finish.lower())
         parts: list[Any] = candidate["content"]["parts"]
         content: str | None = None
         tool_calls: list[ToolCall] = []
@@ -174,4 +178,4 @@ class GoogleLLMClient:
                     )
                 )
 
-        return LLMResponse(content=content or "", tool_calls=tool_calls, extra=extra)
+        return LLMResponse(content=content or "", tool_calls=tool_calls, extra=extra, finish_reason=finish_reason)
