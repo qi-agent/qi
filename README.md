@@ -1,6 +1,11 @@
 <div align="center">
-  <img src="img/qi.svg" alt="Qi logo" width="120">
-  <h1>Qi</h1>
+    <pre>
+   ____    _ 
+  / __ \  (_)
+ / /_/ /  / /
+ \__  /  /_/ 
+   /_/       
+    </pre>
   <p><em>a minimalist coding agent</em></p>
 </div>
 
