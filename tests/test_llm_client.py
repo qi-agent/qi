@@ -405,6 +405,137 @@ def test_google_parses_function_call() -> None:
     assert result.tool_calls[0].args == {"path": "test.py"}
 
 
+def test_google_parses_thought_signatures_per_tool_call() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{
+            "content": {
+                "parts": [
+                    {
+                        "functionCall": {"name": "Skill", "args": {"name": "caveman"}, "id": "a"},
+                        "thoughtSignature": "sig-abc",
+                    },
+                    {"functionCall": {"name": "Bash", "args": {"command": "git status"}, "id": "b"}},
+                    {"functionCall": {"name": "Bash", "args": {"command": "git diff"}, "id": "c"}},
+                ]
+            }
+        }],
+    }
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        result = client.chat([{"role": "user", "content": "explain dirty files"}])
+
+    assert len(result.tool_calls) == 3
+    assert result.tool_calls[0].extra == {"thoughtSignature": "sig-abc"}
+    assert result.tool_calls[1].extra == {}
+    assert result.tool_calls[2].extra == {}
+    # signature survives serialization to the session format
+    assert result.tool_calls[0].as_dict()["thoughtSignature"] == "sig-abc"
+    assert "thoughtSignature" not in result.tool_calls[1].as_dict()
+
+
+def test_google_parses_text_part_thought_signature() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{
+            "content": {
+                "parts": [
+                    {"text": "thinking done", "thoughtSignature": "text-sig"},
+                    {"functionCall": {"name": "Bash", "args": {"command": "ls"}, "id": "x"}},
+                ]
+            }
+        }],
+    }
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp):
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        result = client.chat([{"role": "user", "content": "list files"}])
+
+    # a signature-less later part must not clobber the text part's signature
+    assert result.extra == {"thoughtSignature": "text-sig"}
+    assert result.tool_calls[0].extra == {}
+
+
+def test_google_replays_all_tool_calls_with_signatures() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "OK"}]}}],
+    }
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp) as mock_post:
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        client.chat([
+            {"role": "user", "content": "explain dirty files"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "a", "name": "Skill", "args": {"name": "caveman"}, "thoughtSignature": "sig-abc"},
+                    {"id": "b", "name": "Bash", "args": {"command": "git status"}},
+                    {"id": "c", "name": "Bash", "args": {"command": "git diff"}},
+                ],
+            },
+            {"role": "tool", "name": "Skill", "content": "CAVEMAN MODE"},
+            {"role": "tool", "name": "Bash", "content": "M file.py"},
+            {"role": "tool", "name": "Bash", "content": "diff output"},
+        ])
+
+    contents = mock_post.call_args.kwargs["json"]["contents"]
+    assert contents[1] == {
+        "role": "model",
+        "parts": [
+            {
+                "functionCall": {"id": "a", "name": "Skill", "args": {"name": "caveman"}},
+                "thoughtSignature": "sig-abc",
+            },
+            {"functionCall": {"id": "b", "name": "Bash", "args": {"command": "git status"}}},
+            {"functionCall": {"id": "c", "name": "Bash", "args": {"command": "git diff"}}},
+        ],
+    }
+
+
+def test_google_replays_text_message_level_signature() -> None:
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "candidates": [{"content": {"parts": [{"text": "OK"}]}}],
+    }
+
+    with patch("qi.lib.llm_client._google.requests.post", return_value=mock_resp) as mock_post:
+        client = LLMClient.create(
+            base_url="https://generativelanguage.googleapis.com",
+            model="gemini-flash-latest",
+            api_key="goog-key",
+        )
+        client.chat([
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello", "extra": {"thoughtSignature": "text-sig"}},
+            {"role": "user", "content": "continue"},
+        ])
+
+    contents = mock_post.call_args.kwargs["json"]["contents"]
+    assert contents[1] == {
+        "role": "model",
+        "parts": [{"text": "hello", "thoughtSignature": "text-sig"}],
+    }
+
+
 def test_google_chat_tool_result_message() -> None:
     mock_resp = Mock(spec=requests.Response)
     mock_resp.status_code = 200

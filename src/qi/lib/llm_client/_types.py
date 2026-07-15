@@ -32,12 +32,14 @@ class ToolCall:
         }
 
     def as_dict_google(self) -> dict[str, object]:
-        # may not be needed, as this is inline only
-        return {
+        result: dict[str, object] = {
             "id": self.id,
             "name": self.name,
             "args": self.args,
         }
+        if self.extra.get("thoughtSignature"):
+            result["thoughtSignature"] = self.extra["thoughtSignature"]
+        return result
 
 @dataclass
 class LLMResponse:
