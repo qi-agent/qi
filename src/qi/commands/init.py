@@ -44,6 +44,7 @@ def run(argv: list[str]) -> int:
     qi_dir = root / ".qi"
     config_path = qi_dir / "config.toml"
     session_dir = qi_dir / "sessions"
+    skills_dir = qi_dir / "skills"
 
     if config_path.exists() and not args.force:
         output(Text.styled(f"Already initialized ({config_path}). Use --force to overwrite.", "yellow"))
@@ -51,10 +52,12 @@ def run(argv: list[str]) -> int:
 
     qi_dir.mkdir(parents=True, exist_ok=True)
     session_dir.mkdir(parents=True, exist_ok=True)
+    skills_dir.mkdir(parents=True, exist_ok=True)
     config_path.write_text(DEFAULT_CONFIG)
 
     output(Text.styled(f"Created {qi_dir}/"))
     output(Text.styled(f"Created {config_path}"))
     output(Text.styled(f"Created {session_dir}/"))
+    output(Text.styled(f"Created {skills_dir}/"))
     output(Text.styled("Edit .qi/config.toml to set your model and API key.", "bold"))
     return 0

@@ -25,6 +25,7 @@ RESPONSE_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["messages"],
+    "additionalProperties": False,
 }
 
 RESPONSE_FORMAT: dict[str, Any] = {

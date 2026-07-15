@@ -16,6 +16,7 @@ from qi.lib.llm_client import LLMClient
 from qi.lib.logging import route_log_output
 from qi.lib.schema import RESPONSE_FORMAT
 from qi.lib.session import TURN_ASSISTANT, Session
+from qi.lib.skills import discover_skills, load_skill_body
 from qi.tools import TOOL_SCHEMAS
 
 CHARS_PER_TOKEN = 4
@@ -97,6 +98,7 @@ def _create_session(
     file_paths: list[str],
     file_messages: list[str],
     output_format: str = OUTPUT_FORMAT_TEXT,
+    skill_message: str | None = None,
 ) -> Session:
     prompt, slug_hint = _create_initial_prompt(user_prompt, file_paths)
 
@@ -107,6 +109,8 @@ def _create_session(
     session.log_start(model)
     session.log_message(Role.SYSTEM.value, get_system_prompt())
     session.log_message(Role.USER.value, prompt)
+    if skill_message:
+        session.log_message(Role.USER.value, skill_message)
     for content in file_messages:
         session.log_message(Role.USER.value, content)
     return session
@@ -229,6 +233,7 @@ def _run_piped(
     file_paths: list[str],
     file_messages: list[str],
     output_format: str = OUTPUT_FORMAT_TEXT,
+    skill_message: str | None = None,
 ) -> int:
     """Piped stdin mode: one continuing session, one agent-loop iteration per line.
 
@@ -241,6 +246,8 @@ def _run_piped(
     messages: list[dict[str, Any]] = [
         {LogKey.ROLE.value: Role.SYSTEM.value, LogKey.CONTENT.value: get_system_prompt()},
     ]
+    if skill_message:
+        messages.append({LogKey.ROLE.value: Role.USER.value, LogKey.CONTENT.value: skill_message})
     messages.extend(_files_context_messages(file_paths, file_messages))
 
     if prompt:
@@ -324,6 +331,10 @@ def run(argv: list[str]) -> int:
         help="User instruction",
     )
     parser.add_argument(
+        "--skill",
+        help="Force-load a skill's full instructions into context",
+    )
+    parser.add_argument(
         "files",
         nargs="*",
         metavar="file",
@@ -349,6 +360,16 @@ def run(argv: list[str]) -> int:
     to_stderr = parsed.output_format == OUTPUT_FORMAT_JSONL
     route_console_output(to_stderr=to_stderr)
     route_log_output(to_stderr=to_stderr)
+
+    skill_message = None
+    if parsed.skill:
+        skills = discover_skills()
+        skill = skills.get(parsed.skill)
+        if skill is None:
+            available = ", ".join(sorted(skills)) or "(none)"
+            logger.error(f"Unknown skill '{parsed.skill}'. Available skills: {available}")
+            return 1
+        skill_message = f'<SKILL name="{skill.name}" dir="{skill.path}">\n{load_skill_body(skill)}\n</SKILL>'
 
     if parsed.resume:
         # The resumed history already carries its system prompt and file context;
@@ -379,6 +400,8 @@ def run(argv: list[str]) -> int:
             model=settings.model,
             api_key=settings.api_key,
         )
+        if skill_message:
+            session.log_message(Role.USER.value, skill_message)
         if piped_mode:
             return _pipe_commands_into_session(session, client, settings, parsed.prompt or "")
 
@@ -405,12 +428,12 @@ def run(argv: list[str]) -> int:
     if piped_mode:
         return _run_piped(
             client, settings, parsed.prompt or "", parsed.files, file_messages,
-            output_format=parsed.output_format,
+            output_format=parsed.output_format, skill_message=skill_message,
         )
 
     session = _create_session(
         _get_session_dir(), settings.model, parsed.prompt, parsed.files, file_messages,
-        output_format=parsed.output_format,
+        output_format=parsed.output_format, skill_message=skill_message,
     )
     logger.info(f"Session file: {session.file_path}")
     return _run_loop(session, client, settings)

@@ -13,6 +13,7 @@ def test_init_creates_dot_qi(tmp_path: Path) -> None:
     qi_dir = tmp_path / ".qi"
     assert qi_dir.is_dir()
     assert (qi_dir / "sessions").is_dir()
+    assert (qi_dir / "skills").is_dir()
     config = qi_dir / "config.toml"
     assert config.read_text() == DEFAULT_CONFIG
 

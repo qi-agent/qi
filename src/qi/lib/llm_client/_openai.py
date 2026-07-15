@@ -55,9 +55,12 @@ class OpenAILLMClient:
         if max_tokens:
             body["max_tokens"] = max_tokens
         if tools or self.tools:
+            # Never combine tools with response_format: many OpenRouter providers
+            # implement strict structured output via grammar-constrained decoding,
+            # which makes emitting a tool call impossible.
             body["tools"] = tools or self.tools
             body["tool_choice"] = "auto"
-        if response_format is not None:
+        elif response_format is not None:
             body["response_format"] = response_format
 
         url = f"{self.base_url}/chat/completions"

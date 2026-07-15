@@ -18,6 +18,15 @@ def _truncate(obj: object, max_len: int = 10000) -> str:
     return s
 
 
+def _sanitize_schema(node: Any) -> Any:
+    """Gemini's responseSchema is an OpenAPI subset that rejects additionalProperties."""
+    if isinstance(node, dict):
+        return {k: _sanitize_schema(v) for k, v in node.items() if k != "additionalProperties"}
+    if isinstance(node, list):
+        return [_sanitize_schema(item) for item in node]
+    return node
+
+
 DEFAULT_MODEL = "gemini-flash-latest"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
 API_URL_TEMPLATE = DEFAULT_BASE_URL + "/v1beta/models/{model}:generateContent"
@@ -86,14 +95,20 @@ class GoogleLLMClient:
                 thought_sig_param_dict = make_dict_optional_keys({
                     "thoughtSignature": extra.get("thoughtSignature")
                 })
-                tool_calls = cast(list[Any], msg.get(LogKey.TOOL_CALLS, []))
-                parts: list[dict[str, Any] | None] = [
-                    {"text": msg["content"], **thought_sig_param_dict} if msg.get("content") else None,
-                    {"functionCall": tool_calls[0], **thought_sig_param_dict} if tool_calls else None,
-                ]
+                tool_calls = cast(list[dict[str, Any]], msg.get(LogKey.TOOL_CALLS, []))
+                parts: list[dict[str, Any]] = []
+                if msg.get("content"):
+                    parts.append({"text": msg["content"], **thought_sig_param_dict})
+                for tc in tool_calls:
+                    # thoughtSignature lives at part level, as a sibling of functionCall;
+                    # it must be echoed back exactly where the model returned it
+                    parts.append(make_dict_optional_keys({
+                        "functionCall": {k: v for k, v in tc.items() if k != "thoughtSignature"},
+                        "thoughtSignature": tc.get("thoughtSignature"),
+                    }))
                 contents.append({
                     "role": "model" if role == "assistant" else "user",  # For google, rename "assistant" to "model"
-                    "parts": [part for part in parts if part],
+                    "parts": parts,
                 })
         return contents
 
@@ -115,7 +130,7 @@ class GoogleLLMClient:
         generation_config: dict[str, Any] = make_dict_optional_keys({
             "temperature": temperature,
             "responseMimeType": "application/json",
-            "responseSchema": RESPONSE_SCHEMA,
+            "responseSchema": _sanitize_schema(RESPONSE_SCHEMA),
             "maxOutputTokens": max_tokens or None,
         })
         body: dict[str, Any] = make_dict_optional_keys({
@@ -142,9 +157,10 @@ class GoogleLLMClient:
         extra: dict[str, Any] = {}
 
         for part in parts:
-            extra = make_dict_optional_keys({'thoughtSignature': part.get('thoughtSignature')})
+            sig_dict = make_dict_optional_keys({'thoughtSignature': part.get('thoughtSignature')})
             if "text" in part:
                 content = part["text"]
+                extra.update(sig_dict)
             elif "functionCall" in part:
                 fc = part["functionCall"]
                 tool_calls.append(
@@ -154,6 +170,7 @@ class GoogleLLMClient:
                         id=fc.get("id", ""),
                         name=fc["name"],
                         args=dict(fc.get("args", {})),
+                        extra=sig_dict,
                     )
                 )
 

@@ -1,9 +1,12 @@
-"""Tests for native tools (Bash, ReadFile)."""
+"""Tests for native tools (Bash, ReadFile, Skill)."""
 
 from pathlib import Path
 
+import pytest
+
 from qi.tools.bash import BashTool
 from qi.tools.read_file import ReadFileTool
+from qi.tools.skill import SkillTool
 
 
 class TestBashTool:
@@ -64,3 +67,42 @@ class TestReadFileTool:
         f.write_text("line1\nline2\nline3\n")
         result = self.tool(str(f), start=1, end=2)
         assert result == "line2\n"
+
+
+class TestSkillTool:
+    tool = SkillTool()
+
+    def _write_skill(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / ".qi" / "skills" / "greet"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: greet\ndescription: Say hello\n---\nAlways greet warmly.\n"
+        )
+
+    def test_loads_skill_body(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._write_skill(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        result = self.tool("greet")
+        assert result.startswith("Skill: greet\n")
+        assert f"Directory: {tmp_path / '.qi' / 'skills' / 'greet'}" in result
+        assert "Always greet warmly." in result
+
+    def test_unknown_skill(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._write_skill(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        result = self.tool("nope")
+        assert result.startswith("ERROR: Unknown skill 'nope'")
+        assert "greet" in result
+
+    def test_registered(self) -> None:
+        from qi.tools import TOOL_MAP, TOOL_SCHEMAS
+
+        assert "Skill" in TOOL_MAP
+        assert any(s["function"]["name"] == "Skill" for s in TOOL_SCHEMAS)
+
+    def test_schema_structure(self) -> None:
+        schema = self.tool.schema
+        assert schema["type"] == "function"
+        func = schema["function"]
+        assert func["name"] == "Skill"
+        assert "name" in func["parameters"]["required"]
