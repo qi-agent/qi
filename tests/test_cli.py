@@ -168,3 +168,11 @@ def test_ping_return_value_passes_through(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("qi.commands.ping.run", mock_run)
     rc = main(["ping"])
     assert rc == 99
+
+
+def test_graph_subcommand_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_run = Mock(return_value=0)
+    monkeypatch.setattr("qi.commands.graph.run", mock_run)
+    rc = main(["graph", "--format", "mermaid"])
+    assert rc == 0
+    mock_run.assert_called_once_with(["--format", "mermaid"])

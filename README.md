@@ -68,6 +68,35 @@ OpenAI-compatible API. No vendor lock-in, no telemetry.
 **Minimal.** The source is a few hundred lines. You can read it in an afternoon
 and hack on it by morning.
 
+## Multi-agent
+
+Qi can spin up subagents — independent `qi run` processes wired together with
+pipes — as it sees fit, or when you ask it to delegate:
+
+```sh
+qi -p "Split this review across one subagent per file, then merge their findings" src/*.py
+```
+
+- The `Agent` tool spawns a subagent; its final reply comes back to the parent
+  as the tool result.
+- `reads_from` pipes the replies of earlier agents into a new one, so fan-out
+  and fan-in compose into arbitrary graphs. An agent can only read from agents
+  spawned before it, which makes the graph a DAG by construction — no cycles.
+- `background=true` runs agents in parallel; the `AgentWait` tool collects
+  their replies.
+
+While a subagent runs, its stdin is a named pipe at `.qi/agents/<run>/<name>.in`
+(POSIX), speaking the same JSON message protocol as piped mode — so other
+processes can inject messages into a running agent.
+
+At the end of a run qi depicts the graph, and `qi graph` re-renders it from the
+session log:
+
+```
+qi ──▶ researcher  [done]
+qi ──▶ tester      [done]
+researcher, tester ──▶ summary  [done]
+```
 
 ## Reference
 
@@ -99,6 +128,20 @@ Scaffold a `.qi/` project directory with a default `config.toml` and
 |---|---|
 | `--dir <path>` | Target directory (default: current directory) |
 | `-f`, `--force` | Overwrite existing `config.toml` |
+
+### `qi graph`
+
+```
+qi graph [<session_id>] [--format ascii|mermaid|dot]
+```
+
+Depict the subagent graph recorded in a session (default: the most recent
+session in `.qi/sessions/`). `--format mermaid` and `--format dot` emit
+diagram sources for embedding or rendering elsewhere.
+
+| Flag | Description |
+|---|---|
+| `--format` | Output format: `ascii` (default), `mermaid`, or `dot` |
 
 ### `qi ping`
 
@@ -169,7 +212,7 @@ qi -p "Review all for security issues" src/qi/*.py
 | **M2 — Sessions** | 🔜 Next | Every run logged to JSONL; resume with `qi resume <id>`. |
 | **M3 — MCP tools** | 🔜 Planned | Load MCP servers from config, expose tools to LLM. |
 | **M4 — Pipeline mode** | 🔜 Planned | Streaming output, stdin integration, true pipe composition. |
-| **M5 — Multi-agent** | 🔜 Future | Delegation and sub-agents for parallel tasks. |
+| **M5 — Multi-agent** | ✅ Done | Delegation and sub-agents for parallel tasks, wired with pipes into arbitrary graphs; `qi graph` depicts them. |
 
 ## Development
 

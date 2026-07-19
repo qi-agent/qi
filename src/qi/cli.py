@@ -16,6 +16,7 @@ SUBCOMMANDS: dict[str, str] = {
     "run": "qi.commands.run",
     "ping": "qi.commands.ping",
     "init": "qi.commands.init",
+    "graph": "qi.commands.graph",
 }
 
 HELP = """Usage: qi [<options>] <file>
@@ -24,6 +25,7 @@ HELP = """Usage: qi [<options>] <file>
 Commands:
   init   Scaffold a .qi project directory
   run    Process a prompt or analyse given files (default)
+  graph  Depict the subagent graph recorded in a session
   ping   Ping the server
 
 Global options:

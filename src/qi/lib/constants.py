@@ -10,6 +10,7 @@ class Role(StrEnum):
 
 
 class RecordType(StrEnum):
+    AGENT = "agent"  # subagent lifecycle event (spawn/done/failed); never sent to the LLM
     MESSAGE = "message"
     SESSION_END = "session_end"
     SESSION_START = "session_start"

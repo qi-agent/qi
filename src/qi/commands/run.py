@@ -8,8 +8,9 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, TextIO
 
+from qi.lib import agents, handler
 from qi.lib.config import Settings, load
-from qi.lib.constants import LogKey, LogRecord, Role
+from qi.lib.constants import LogKey, LogRecord, RecordType, Role
 from qi.lib.context import get_system_prompt
 from qi.lib.handler import handle_response, route_console_output
 from qi.lib.llm_client import LLMClient
@@ -183,6 +184,11 @@ def _run_loop(
     max_iterations: int = 100,
     interactive: bool = True,
 ) -> int:
+    # Subagent lifecycle events land in this session's log so `qi graph` can
+    # re-render the agent graph later.
+    agents.set_event_sink(
+        lambda meta: session.log_record(type_=RecordType.AGENT.value, meta=meta)
+    )
     iteration = 0
     while iteration < max_iterations:
         iteration += 1
@@ -297,6 +303,16 @@ def _pipe_commands_into_session(
     return 0
 
 
+def _finish(rc: int) -> int:
+    """End-of-run bookkeeping: settle subagents and show the graph."""
+    runner = agents.peek_runner()
+    if runner is not None and runner.graph.nodes:
+        runner.shutdown()
+        handler.console.print("Agent graph", style="bold blue")
+        handler.console.print(runner.graph.render_ascii(), markup=False, highlight=False, soft_wrap=True)
+    return rc
+
+
 def _resume_session(session_dir: Path, session_id: str, output_format: str) -> Session | None:
     """Rebuild a Session from .qi/sessions/<id>.jsonl, or None if it can't be loaded."""
     # A session id is a bare file stem. Anything that could navigate out of the
@@ -406,11 +422,11 @@ def run(argv: list[str]) -> int:
         if skill_message:
             session.log_message(Role.USER.value, skill_message)
         if piped_mode:
-            return _pipe_commands_into_session(session, client, settings, parsed.prompt or "")
+            return _finish(_pipe_commands_into_session(session, client, settings, parsed.prompt or ""))
 
         if parsed.prompt:
             session.log_message(Role.USER.value, parsed.prompt)
-        return _run_loop(session, client, settings)
+        return _finish(_run_loop(session, client, settings))
 
     if not parsed.files and not parsed.prompt and not piped_mode:
         logger.error("No input files or prompt provided.")
@@ -429,14 +445,14 @@ def run(argv: list[str]) -> int:
     )
 
     if piped_mode:
-        return _run_piped(
+        return _finish(_run_piped(
             client, settings, parsed.prompt or "", parsed.files, file_messages,
             output_format=parsed.output_format, skill_message=skill_message,
-        )
+        ))
 
     session = _create_session(
         _get_session_dir(), settings.model, parsed.prompt, parsed.files, file_messages,
         output_format=parsed.output_format, skill_message=skill_message,
     )
     logger.info(f"Session file: {session.file_path}")
-    return _run_loop(session, client, settings)
+    return _finish(_run_loop(session, client, settings))
